@@ -8,11 +8,12 @@ export interface DocumentStatsItem {
 }
 
 const DOC_TYPE_LABELS: Record<string, string> = {
-  id_card: "ID Card",
+  trc_card: "TRC Card",
   drivers_license: "License",
   contract: "Contract",
   insurance: "Insurance",
   vehicle_permit: "Permit",
+  passport: "Passport",
   other: "Other",
 };
 

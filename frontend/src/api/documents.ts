@@ -1,11 +1,12 @@
 import { api } from "../lib/api";
 
 export type DocumentType =
-  | "id_card"
+  | "trc_card"
   | "drivers_license"
   | "contract"
   | "insurance"
   | "vehicle_permit"
+  | "passport"
   | "other";
 
 export interface DriverDocument {

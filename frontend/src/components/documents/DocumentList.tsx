@@ -10,20 +10,22 @@ import {
 } from "../../api/documents";
 
 const DOC_TYPE_LABELS: Record<DocumentType, string> = {
-  id_card: "ID Card",
+  trc_card: "TRC Card",
   drivers_license: "Driver's License",
   contract: "Contract",
   insurance: "Insurance",
   vehicle_permit: "Vehicle Permit",
+  passport: "Passport",
   other: "Other",
 };
 
 const DOC_TYPE_COLORS: Record<DocumentType, string> = {
-  id_card: "bg-blue-100 text-blue-800",
+  trc_card: "bg-blue-100 text-blue-800",
   drivers_license: "bg-emerald-100 text-emerald-800",
   contract: "bg-amber-100 text-amber-800",
   insurance: "bg-purple-100 text-purple-800",
   vehicle_permit: "bg-slate-100 text-slate-800",
+  passport: "bg-cyan-100 text-cyan-800",
   other: "bg-gray-100 text-gray-800",
 };
 

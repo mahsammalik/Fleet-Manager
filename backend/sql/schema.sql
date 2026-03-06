@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS driver_documents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
     organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-    document_type VARCHAR(50) NOT NULL CHECK (document_type IN ('id_card', 'drivers_license', 'contract', 'insurance', 'vehicle_permit', 'other')),
+    document_type VARCHAR(50) NOT NULL CHECK (document_type IN ('trc_card', 'drivers_license', 'contract', 'insurance', 'vehicle_permit', 'passport', 'other')),
     file_name VARCHAR(255) NOT NULL,
     file_path VARCHAR(500) NOT NULL,
     file_size INTEGER,

@@ -7,11 +7,12 @@ import {
 } from "../../api/documents";
 
 const DOCUMENT_TYPES: { value: DocumentType; label: string }[] = [
-  { value: "id_card", label: "ID Card" },
+  { value: "trc_card", label: "TRC Card" },
   { value: "drivers_license", label: "Driver's License" },
   { value: "contract", label: "Contract" },
   { value: "insurance", label: "Insurance" },
   { value: "vehicle_permit", label: "Vehicle Permit" },
+  { value: "passport", label: "Passport" },
   { value: "other", label: "Other" },
 ];
 
