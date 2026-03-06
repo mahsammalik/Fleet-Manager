@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { deleteDriver } from "../../api/drivers";
 import { useAuthStore } from "../../store/authStore";
-import { LogoutButton } from "../../components/UI/LogoutButton";
 
 interface Driver {
   id: string;
@@ -40,7 +39,7 @@ export function DriversListPage() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-full bg-slate-100">
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link to="/dashboard" className="text-sm text-slate-600 hover:text-slate-900">Dashboard</Link>
@@ -58,7 +57,6 @@ export function DriversListPage() {
               {user.firstName} {user.lastName} • {user.role}
             </span>
           )}
-          <LogoutButton />
         </div>
       </header>
       <main className="p-6">

@@ -12,7 +12,6 @@ import {
 import { CommissionInput } from "../../components/drivers/CommissionInput";
 import { DocumentUpload } from "../../components/documents/DocumentUpload";
 import { DocumentList } from "../../components/documents/DocumentList";
-import { LogoutButton } from "../../components/UI/LogoutButton";
 
 const EMPLOYMENT_STATUSES = [
   { value: "active", label: "Active" },
@@ -224,18 +223,15 @@ export function EditDriverPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-full bg-slate-100">
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Edit Driver</h1>
           <p className="text-xs text-slate-500 mt-0.5 font-mono">ID: {id}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <Link to="/drivers" className="text-sm text-slate-600 hover:text-slate-900">
-            ← Back to drivers
-          </Link>
-          <LogoutButton />
-        </div>
+        <Link to="/drivers" className="text-sm text-slate-600 hover:text-slate-900">
+          ← Back to drivers
+        </Link>
       </header>
 
       <main className="p-6 max-w-4xl mx-auto">

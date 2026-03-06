@@ -12,7 +12,6 @@ import {
 import { useAuthStore } from "../../store/authStore";
 import { DocumentUpload } from "../../components/documents/DocumentUpload";
 import { DocumentList } from "../../components/documents/DocumentList";
-import { LogoutButton } from "../../components/UI/LogoutButton";
 
 type TabId = "profile" | "documents" | "activity";
 
@@ -123,7 +122,7 @@ export function DriverDetailPage() {
   const d = driver as Driver;
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-full bg-slate-100">
       <header className="bg-white border-b border-slate-200 px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -155,7 +154,6 @@ export function DriverDetailPage() {
                 Delete driver
               </button>
             )}
-            <LogoutButton />
           </div>
         </div>
 

@@ -1,5 +1,7 @@
+import React from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuthStore } from "./store/authStore";
+import { AppLayout } from "./components/layout/AppLayout";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { DriversListPage } from "./pages/drivers/DriversListPage";
 import { AddDriverPage } from "./pages/drivers/AddDriverPage";
@@ -8,12 +10,12 @@ import { DriverDetailPage } from "./pages/drivers/DriverDetailPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { RegisterPage } from "./pages/register/Register";
 
-function ProtectedRoute({ children }: { children: JSX.Element }) {
+function ProtectedRoute({ children }: { children: React.ReactElement }) {
   const token = useAuthStore((s) => s.token);
   if (!token) {
     return <Navigate to="/login" replace />;
   }
-  return children;
+  return <AppLayout>{children}</AppLayout>;
 }
 
 export default function App() {
