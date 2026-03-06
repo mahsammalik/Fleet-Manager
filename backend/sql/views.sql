@@ -20,12 +20,16 @@ GROUP BY employment_status;
 -- Monthly Earnings View
 CREATE VIEW monthly_earnings AS
 SELECT 
-    DATE_TRUNC('month', created_at) as month,
-    SUM(total_gross_earnings) as total_earnings,
-    SUM(company_commission) as total_commission
-FROM earnings_records
-WHERE organization_id = (SELECT id FROM organizations LIMIT 1)
-GROUP BY DATE_TRUNC('month', created_at)
+    DATE_TRUNC('month', er.created_at) as month,
+    SUM(er.gross_earnings) as total_earnings,
+    SUM(er.platform_fee) as total_platform_fees,
+    SUM(er.net_earnings) as total_net_earnings,
+    SUM(er.company_commission) as total_commission,
+    SUM(er.driver_payout) as total_driver_payout
+FROM earnings_records er
+JOIN drivers d ON er.driver_id = d.id
+WHERE d.organization_id = (SELECT id FROM organizations LIMIT 1)
+GROUP BY DATE_TRUNC('month', er.created_at)
 ORDER BY month DESC;
 
 -- Document Stats View
@@ -38,59 +42,3 @@ SELECT
 FROM driver_documents
 WHERE organization_id = (SELECT id FROM organizations LIMIT 1)
 GROUP BY document_type;
-
--- Earnings Records table
-CREATE TABLE earnings_records (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    import_id UUID REFERENCES earnings_imports(id),
-    driver_id UUID REFERENCES drivers(id),
-    platform VARCHAR(50) NOT NULL,
-    trip_date DATE NOT NULL,
-    trip_count INTEGER,
-    gross_earnings DECIMAL(10, 2),
-    platform_fee DECIMAL(10, 2),
-    net_earnings DECIMAL(10, 2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Driver Payments table
-CREATE TABLE driver_payments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID REFERENCES organizations(id),
-    driver_id UUID REFERENCES drivers(id),
-    payment_period_start DATE NOT NULL,
-    payment_period_end DATE NOT NULL,
-    total_gross_earnings DECIMAL(12, 2),
-    company_commission DECIMAL(10, 2),
-    bonuses DECIMAL(10, 2) DEFAULT 0,
-    penalties DECIMAL(10, 2) DEFAULT 0,
-    adjustments DECIMAL(10, 2) DEFAULT 0,
-    net_driver_payout DECIMAL(10, 2),
-    payment_status VARCHAR(50) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'approved', 'paid', 'hold')),
-    payment_date DATE,
-    payment_method VARCHAR(50),
-    transaction_ref VARCHAR(100),
-    notes TEXT,
-    approved_by UUID REFERENCES users(id),
-    approved_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Driver Activities table
-CREATE TABLE driver_activities (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
-    activity_type VARCHAR(50) NOT NULL,
-    activity_description TEXT,
-    performed_by UUID REFERENCES users(id),
-    old_values JSONB,
-    new_values JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Indexes
-CREATE INDEX idx_earnings_records_driver ON earnings_records(driver_id);
-CREATE INDEX idx_earnings_records_date ON earnings_records(trip_date);
-CREATE INDEX idx_driver_payments_status ON driver_payments(payment_status);
-CREATE INDEX idx_driver_activities_driver ON driver_activities(driver_id);
-CREATE INDEX idx_driver_activities_created ON driver_activities(created_at DESC);
