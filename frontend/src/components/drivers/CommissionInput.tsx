@@ -89,7 +89,7 @@ export function CommissionInput({
       {(commissionType === "fixed_amount" || commissionType === "hybrid") && (
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
-            Fixed commission amount ($)
+            Fixed commission amount (RON)
           </label>
           <input
             type="number"
@@ -113,7 +113,7 @@ export function CommissionInput({
 
       <div>
         <label className="block text-sm font-medium text-slate-700 mb-1">
-          Minimum commission ($) <span className="text-slate-400">optional</span>
+          Minimum commission (RON) <span className="text-slate-400">optional</span>
         </label>
         <input
           type="number"

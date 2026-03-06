@@ -15,6 +15,7 @@ import { ActivityTable, type ActivityRow } from "../../components/dashboard/Acti
 import { DriverStatusChart } from "../../components/dashboard/DriverStatusChart";
 import { EarningsChart } from "../../components/dashboard/EarningsChart";
 import { DocumentStatsChart } from "../../components/dashboard/DocumentStatsChart";
+import { formatCurrency } from "../../utils/currency";
 
 const ACTIVITY_LABELS: Record<string, string> = {
   profile_update: "Profile updated",
@@ -176,12 +177,12 @@ export function DashboardPage() {
               />
               <AnalyticsCard
                 title="Commission earned"
-                value={`$${Number(stats.totalCommissionEarned ?? 0).toLocaleString()}`}
+                value={formatCurrency(stats.totalCommissionEarned ?? 0)}
                 icon={<CurrencyIcon />}
               />
               <AnalyticsCard
                 title="Pending payments"
-                value={stats.pendingPayments}
+                value={formatCurrency(stats.pendingPayments ?? 0)}
                 icon={<CurrencyIcon />}
               />
             </div>

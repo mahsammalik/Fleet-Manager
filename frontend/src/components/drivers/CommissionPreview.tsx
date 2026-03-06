@@ -1,15 +1,7 @@
 import { useState } from "react";
+import { formatCurrency, getCurrencyCode } from "../../utils/currency";
 
 export type CommissionType = "percentage" | "fixed_amount" | "hybrid";
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
 
 function calculateCommission(
   type: CommissionType,
@@ -78,7 +70,7 @@ export function CommissionPreview(props: CommissionPreviewProps) {
       {controlledEarnings == null && (
         <div className="mb-3">
           <label className="block text-xs font-medium text-slate-600 mb-1">
-            Example earnings ($)
+            Example earnings ({getCurrencyCode()})
           </label>
           <input
             type="number"
