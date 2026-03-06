@@ -61,6 +61,8 @@ function driverToForm(
       d.minimum_commission != null ? Number(d.minimum_commission) : 0,
     uberDriverId: d.uber_driver_id ?? "",
     boltDriverId: d.bolt_driver_id ?? "",
+    glovoCourierId: d.glovo_courier_id ?? "",
+    boltCourierId: d.bolt_courier_id ?? "",
     notes: d.notes ?? "",
   };
 }
@@ -170,7 +172,9 @@ export function EditDriverPage() {
       | keyof CreateDriverPayload
       | "commissionType"
       | "fixedCommissionAmount"
-      | "minimumCommission",
+      | "minimumCommission"
+      | "glovoCourierId"
+      | "boltCourierId",
     value: string | number | undefined
   ) => {
     setForm((prev) => (prev ? { ...prev, [key]: value } : null));
@@ -398,6 +402,24 @@ export function EditDriverPage() {
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
                   value={form.boltDriverId ?? ""}
                   onChange={(e) => update("boltDriverId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Glovo courier ID</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  value={form.glovoCourierId ?? ""}
+                  onChange={(e) => update("glovoCourierId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Bolt courier ID</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  value={form.boltCourierId ?? ""}
+                  onChange={(e) => update("boltCourierId", e.target.value)}
                 />
               </div>
             </div>

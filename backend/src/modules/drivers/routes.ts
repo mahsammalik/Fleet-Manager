@@ -44,7 +44,7 @@ router.get("/", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT id, first_name, last_name, phone, email, employment_status, commission_rate, uber_driver_id, bolt_driver_id
+      SELECT id, first_name, last_name, phone, email, employment_status, commission_rate, uber_driver_id, bolt_driver_id, glovo_courier_id, bolt_courier_id
       FROM drivers
       ${where}
       ORDER BY created_at DESC
@@ -190,6 +190,8 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
     minimumCommission,
     uberDriverId,
     boltDriverId,
+    glovoCourierId,
+    boltCourierId,
     notes,
   } = req.body as Record<string, unknown>;
 
@@ -230,6 +232,8 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
         minimum_commission,
         uber_driver_id,
         bolt_driver_id,
+        glovo_courier_id,
+        bolt_courier_id,
         notes
       )
       VALUES (
@@ -237,7 +241,7 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
         $8, $9, $10, $11, COALESCE($12, 'active'),
         COALESCE($13, 20.0), COALESCE($14, 20.0),
         COALESCE($15, 'percentage'), COALESCE($16, 0), COALESCE($17, 0),
-        $18, $19, $20
+        $18, $19, $20, $21, $22
       )
       RETURNING *
       `,
@@ -261,6 +265,8 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
         minimumCommission,
         uberDriverId,
         boltDriverId,
+        glovoCourierId,
+        boltCourierId,
         notes,
       ],
     );
@@ -300,6 +306,8 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
     minimumCommission,
     uberDriverId,
     boltDriverId,
+    glovoCourierId,
+    boltCourierId,
     notes,
   } = req.body as Record<string, unknown>;
 
@@ -336,9 +344,11 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
         minimum_commission = COALESCE($16, minimum_commission),
         uber_driver_id = $17,
         bolt_driver_id = $18,
-        notes = $19,
+        glovo_courier_id = $19,
+        bolt_courier_id = $20,
+        notes = $21,
         updated_at = NOW()
-      WHERE id = $20 AND organization_id = $21
+      WHERE id = $22 AND organization_id = $23
       RETURNING *
       `,
       [
@@ -360,6 +370,8 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
         minimumCommission,
         uberDriverId,
         boltDriverId,
+        glovoCourierId,
+        boltCourierId,
         notes,
         id,
         orgId,

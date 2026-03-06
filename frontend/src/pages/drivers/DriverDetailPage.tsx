@@ -220,6 +220,8 @@ export function DriverDetailPage() {
               <dl className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                 <div><dt className="text-slate-500">Uber driver ID</dt><dd>{d.uber_driver_id ?? "—"}</dd></div>
                 <div><dt className="text-slate-500">Bolt driver ID</dt><dd>{d.bolt_driver_id ?? "—"}</dd></div>
+                <div><dt className="text-slate-500">Glovo courier ID</dt><dd>{d.glovo_courier_id ?? "—"}</dd></div>
+                <div><dt className="text-slate-500">Bolt courier ID</dt><dd>{d.bolt_courier_id ?? "—"}</dd></div>
               </dl>
             </section>
 

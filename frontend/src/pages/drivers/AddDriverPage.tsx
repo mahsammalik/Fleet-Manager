@@ -51,6 +51,8 @@ export function AddDriverPage() {
     minimumCommission: 0,
     uberDriverId: "",
     boltDriverId: "",
+    glovoCourierId: "",
+    boltCourierId: "",
     notes: "",
   });
   const [commissionErrors, setCommissionErrors] = useState<Partial<Record<string, string>>>({});
@@ -113,13 +115,15 @@ export function AddDriverPage() {
       minimumCommission: form.minimumCommission ?? 0,
       uberDriverId: form.uberDriverId?.trim() || undefined,
       boltDriverId: form.boltDriverId?.trim() || undefined,
+      glovoCourierId: form.glovoCourierId?.trim() || undefined,
+      boltCourierId: form.boltCourierId?.trim() || undefined,
       notes: form.notes?.trim() || undefined,
     };
     mutation.mutate(payload);
   };
 
   const update = (
-    key: keyof CreateDriverPayload | "commissionType" | "fixedCommissionAmount" | "minimumCommission",
+    key: keyof CreateDriverPayload | "commissionType" | "fixedCommissionAmount" | "minimumCommission" | "glovoCourierId" | "boltCourierId",
     value: string | number | undefined
   ) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -316,6 +320,24 @@ export function AddDriverPage() {
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
                   value={form.boltDriverId ?? ""}
                   onChange={(e) => update("boltDriverId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Glovo courier ID</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  value={form.glovoCourierId ?? ""}
+                  onChange={(e) => update("glovoCourierId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Bolt courier ID</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  value={form.boltCourierId ?? ""}
+                  onChange={(e) => update("boltCourierId", e.target.value)}
                 />
               </div>
             </div>

@@ -15,6 +15,8 @@ interface Driver {
   commission_rate: string;
   uber_driver_id: string | null;
   bolt_driver_id: string | null;
+  glovo_courier_id?: string | null;
+  bolt_courier_id?: string | null;
 }
 
 export function DriversListPage() {
@@ -90,7 +92,7 @@ export function DriversListPage() {
                     <td className="px-3 py-2 capitalize">{driver.employment_status}</td>
                     <td className="px-3 py-2">{driver.commission_rate}%</td>
                     <td className="px-3 py-2 text-xs text-slate-600">
-                      {driver.uber_driver_id || "-"} / {driver.bolt_driver_id || "-"}
+                      Uber: {driver.uber_driver_id || "-"} · Bolt: {driver.bolt_driver_id || "-"} · Glovo: {driver.glovo_courier_id || "-"} · Bolt C: {driver.bolt_courier_id || "-"}
                     </td>
                     <td className="px-3 py-2 flex items-center gap-3">
                       <Link

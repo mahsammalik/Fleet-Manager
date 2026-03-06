@@ -10,6 +10,8 @@ export interface DriverListItem {
   commission_rate: string;
   uber_driver_id: string | null;
   bolt_driver_id: string | null;
+  glovo_courier_id?: string | null;
+  bolt_courier_id?: string | null;
 }
 
 export type CommissionType = "percentage" | "fixed_amount" | "hybrid";
@@ -51,6 +53,8 @@ export interface CreateDriverPayload {
   minimumCommission?: number;
   uberDriverId?: string;
   boltDriverId?: string;
+  glovoCourierId?: string;
+  boltCourierId?: string;
   notes?: string;
 }
 

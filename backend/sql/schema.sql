@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS drivers (
     minimum_commission DECIMAL(10, 2) DEFAULT 0.00,
     uber_driver_id VARCHAR(100),
     bolt_driver_id VARCHAR(100),
+    glovo_courier_id VARCHAR(100),
+    bolt_courier_id VARCHAR(100),
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -94,6 +96,8 @@ CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_drivers_organization ON drivers(organization_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_status ON drivers(employment_status);
+CREATE INDEX IF NOT EXISTS idx_drivers_glovo_id ON drivers(glovo_courier_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_bolt_courier_id ON drivers(bolt_courier_id);
 CREATE INDEX IF NOT EXISTS idx_driver_documents_driver ON driver_documents(driver_id);
 CREATE INDEX IF NOT EXISTS idx_driver_documents_organization ON driver_documents(organization_id);
 CREATE INDEX IF NOT EXISTS idx_driver_documents_type ON driver_documents(document_type);

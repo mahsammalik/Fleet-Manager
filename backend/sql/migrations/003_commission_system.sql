@@ -58,3 +58,12 @@ CREATE INDEX IF NOT EXISTS idx_earnings_imports_org ON earnings_imports(organiza
 CREATE INDEX IF NOT EXISTS idx_earnings_records_import ON earnings_records(import_id);
 CREATE INDEX IF NOT EXISTS idx_driver_payments_driver ON driver_payments(driver_id);
 CREATE INDEX IF NOT EXISTS idx_driver_payments_period ON driver_payments(payment_period_start, payment_period_end);
+
+-- Update drivers table to add Glovo and Bolt Courier IDs
+ALTER TABLE drivers 
+ADD COLUMN IF NOT EXISTS glovo_courier_id VARCHAR(100),
+ADD COLUMN IF NOT EXISTS bolt_courier_id VARCHAR(100);
+
+-- Add indexes for new columns
+CREATE INDEX IF NOT EXISTS idx_drivers_glovo_id ON drivers(glovo_courier_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_bolt_courier_id ON drivers(bolt_courier_id);
