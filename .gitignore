@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+
+# Build outputs
+build/
+dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Testing / coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# OS files
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE / editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# Temp / cache
+tmp/
+temp/
+.cache/
+*.tmp
+*.temp
+.npm
+.eslintcache
+.stylelintcache
+*.pid
+*.seed
+*.pid.lock
+
+# Optional: keep uploads out of repo (uncomment if uploads should not be committed)
+# backend/uploads/
+# uploads/
+
+# Optional: lockfiles (uncomment if you want to ignore; usually you commit them)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml

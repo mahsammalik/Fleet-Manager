@@ -1,0 +1,41 @@
+import express from "express";
+import cors from "cors";
+import path from "path";
+import { authRoutes } from "./modules/auth/routes";
+import { driverRoutes } from "./modules/drivers/routes";
+import { documentRoutes } from "./modules/documents/routes";
+import { dashboardRoutes } from "./modules/dashboard/routes";
+
+export const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"), {
+    maxAge: "1d",
+  }),
+);
+
+app.use("/api/auth", authRoutes);
+app.use("/api/drivers", driverRoutes);
+app.use("/api/drivers", documentRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+// Multer / upload errors
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const m = err as { code?: string; message?: string };
+  if (m.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ message: "File too large. Maximum size is 10MB." });
+  }
+  if (m.message && typeof m.message === "string" && m.message.includes("Only PDF")) {
+    return res.status(400).json({ message: m.message });
+  }
+  return res.status(500).json({ message: "Internal server error" });
+});
+

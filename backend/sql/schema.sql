@@ -1,0 +1,183 @@
+-- Fleet Manager - Initial schema
+-- Run the ENTIRE file once (e.g. psql -f sql/schema.sql or paste all in pgAdmin Query Tool).
+-- If you see "relation X does not exist", the real error is usually earlier in the script; run from the start.
+
+BEGIN;
+
+-- Enable UUID extension (required for uuid_generate_v4())
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Organizations table
+CREATE TABLE IF NOT EXISTS organizations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE,
+    phone VARCHAR(20),
+    address TEXT,
+    logo_url VARCHAR(500),
+    settings JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Users table with roles: admin, accountant, driver
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    phone VARCHAR(20),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('admin', 'accountant', 'driver')),
+    avatar_url VARCHAR(500),
+    is_active BOOLEAN DEFAULT true,
+    last_login TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Driver profiles
+CREATE TABLE IF NOT EXISTS drivers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    email VARCHAR(255),
+    phone VARCHAR(20) NOT NULL,
+    date_of_birth DATE,
+    address TEXT,
+    license_number VARCHAR(50),
+    license_expiry DATE,
+    license_class VARCHAR(20),
+    hire_date DATE,
+    employment_status VARCHAR(50) DEFAULT 'active' CHECK (employment_status IN ('active', 'suspended', 'terminated')),
+    commission_rate DECIMAL(5, 2) DEFAULT 20.00,
+    base_commission_rate DECIMAL(5, 2) DEFAULT 20.00,
+    commission_type VARCHAR(50) DEFAULT 'percentage' CHECK (commission_type IN ('percentage', 'fixed_amount', 'hybrid')),
+    fixed_commission_amount DECIMAL(10, 2) DEFAULT 0.00,
+    minimum_commission DECIMAL(10, 2) DEFAULT 0.00,
+    uber_driver_id VARCHAR(100),
+    bolt_driver_id VARCHAR(100),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Unique on (organization_id, license_number) only when license_number is set
+CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_org_license
+    ON drivers (organization_id, license_number)
+    WHERE license_number IS NOT NULL;
+
+-- Driver documents
+CREATE TABLE IF NOT EXISTS driver_documents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    document_type VARCHAR(50) NOT NULL CHECK (document_type IN ('id_card', 'drivers_license', 'contract', 'insurance', 'vehicle_permit', 'other')),
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    expiry_date DATE,
+    is_verified BOOLEAN DEFAULT false,
+    verified_by UUID REFERENCES users(id),
+    verified_at TIMESTAMP,
+    uploaded_by UUID REFERENCES users(id),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_drivers_organization ON drivers(organization_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_status ON drivers(employment_status);
+CREATE INDEX IF NOT EXISTS idx_driver_documents_driver ON driver_documents(driver_id);
+CREATE INDEX IF NOT EXISTS idx_driver_documents_organization ON driver_documents(organization_id);
+CREATE INDEX IF NOT EXISTS idx_driver_documents_type ON driver_documents(document_type);
+CREATE INDEX IF NOT EXISTS idx_driver_documents_verified ON driver_documents(is_verified);
+
+-- Driver activity history
+CREATE TABLE IF NOT EXISTS driver_activities (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
+    activity_type VARCHAR(50) NOT NULL,
+    activity_description TEXT,
+    performed_by UUID REFERENCES users(id),
+    old_values JSONB,
+    new_values JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_driver_activities_driver ON driver_activities(driver_id);
+CREATE INDEX IF NOT EXISTS idx_driver_activities_created ON driver_activities(created_at DESC);
+
+-- Earnings imports (must exist before earnings_records)
+CREATE TABLE IF NOT EXISTS earnings_imports (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    file_name VARCHAR(255),
+    import_date DATE NOT NULL,
+    week_start DATE NOT NULL,
+    week_end DATE NOT NULL,
+    platform VARCHAR(50) NOT NULL CHECK (platform IN ('uber', 'bolt')),
+    total_gross DECIMAL(12, 2),
+    total_trips INTEGER,
+    record_count INTEGER,
+    imported_by UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS earnings_records (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    import_id UUID REFERENCES earnings_imports(id) ON DELETE CASCADE,
+    driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
+    platform VARCHAR(50) NOT NULL,
+    trip_date DATE NOT NULL,
+    trip_count INTEGER,
+    gross_earnings DECIMAL(10, 2),
+    platform_fee DECIMAL(10, 2),
+    net_earnings DECIMAL(10, 2),
+    company_commission DECIMAL(10, 2),
+    driver_payout DECIMAL(10, 2),
+    commission_type VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Driver payments
+CREATE TABLE IF NOT EXISTS driver_payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
+    payment_period_start DATE NOT NULL,
+    payment_period_end DATE NOT NULL,
+    total_gross_earnings DECIMAL(12, 2),
+    total_platform_fees DECIMAL(10, 2),
+    total_net_earnings DECIMAL(12, 2),
+    company_commission DECIMAL(10, 2),
+    bonuses DECIMAL(10, 2) DEFAULT 0,
+    penalties DECIMAL(10, 2) DEFAULT 0,
+    adjustments DECIMAL(10, 2) DEFAULT 0,
+    net_driver_payout DECIMAL(10, 2),
+    payment_status VARCHAR(50) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'approved', 'paid', 'hold')),
+    payment_date DATE,
+    payment_method VARCHAR(50),
+    transaction_ref VARCHAR(100),
+    notes TEXT,
+    approved_by UUID REFERENCES users(id),
+    approved_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_earnings_imports_org ON earnings_imports(organization_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_records_driver ON earnings_records(driver_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_records_date ON earnings_records(trip_date);
+CREATE INDEX IF NOT EXISTS idx_earnings_records_import ON earnings_records(import_id);
+CREATE INDEX IF NOT EXISTS idx_driver_payments_driver ON driver_payments(driver_id);
+CREATE INDEX IF NOT EXISTS idx_driver_payments_status ON driver_payments(payment_status);
+CREATE INDEX IF NOT EXISTS idx_driver_payments_period ON driver_payments(payment_period_start, payment_period_end);
+
+COMMIT;
