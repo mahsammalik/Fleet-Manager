@@ -21,7 +21,7 @@ function ProtectedRoute({ children }: { children: React.ReactElement }) {
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route
         path="/dashboard"
