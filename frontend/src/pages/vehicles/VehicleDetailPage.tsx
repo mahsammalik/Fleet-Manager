@@ -8,7 +8,6 @@ import {
   createVehicleRental,
   createVehicleMaintenance,
   updateVehicleRental,
-  updateVehicleMaintenance,
   type Vehicle,
   type VehicleRental,
   type VehicleMaintenance,
@@ -131,21 +130,6 @@ export function VehicleDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
       queryClient.invalidateQueries({ queryKey: ["vehicles"] });
       setAddMaintenanceOpen(false);
-    },
-  });
-
-  const updateMaintenanceMutation = useMutation({
-    mutationFn: ({
-      maintenanceId,
-      data,
-    }: {
-      maintenanceId: string;
-      data: { status: string };
-    }) => updateVehicleMaintenance(id!, maintenanceId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["vehicleMaintenance", id] });
-      queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
-      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
     },
   });
 

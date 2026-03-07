@@ -25,7 +25,9 @@ function toDateInputValue(value: string | null | undefined): string {
   return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
 }
 
-function vehicleToForm(v: Vehicle): CreateVehiclePayload & { status: string; currentDriverId: string } {
+type VehicleFormState = CreateVehiclePayload & { status: string; currentDriverId: string };
+
+function vehicleToForm(v: Vehicle): VehicleFormState {
   return {
     vehicleType: v.vehicle_type ?? "car",
     make: v.make ?? "",
@@ -54,9 +56,7 @@ export function EditVehiclePage() {
   const queryClient = useQueryClient();
   const [success, setSuccess] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [form, setForm] = useState<
-    (CreateVehiclePayload & { status: string; currentDriverId: string }) | null
-  >(null);
+  const [form, setForm] = useState<VehicleFormState | null>(null);
 
   const { data: vehicleRes, isLoading: loadingVehicle, isError: vehicleError } = useQuery({
     queryKey: ["vehicle", id],
@@ -135,7 +135,7 @@ export function EditVehiclePage() {
     mutation.mutate(payload);
   };
 
-  const update = (key: keyof typeof form, value: string | number | undefined) => {
+  const update = (key: keyof VehicleFormState, value: string | number | undefined) => {
     setForm((prev) => (prev ? { ...prev, [key]: value } : null));
   };
 
