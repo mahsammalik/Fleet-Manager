@@ -6,9 +6,16 @@ import {
   updateDriverNotes,
   deleteDriver,
   getDriverActivity,
+  getDriverActiveRental,
   type Driver,
   type DriverActivity,
 } from "../../api/driverDetail";
+import {
+  getVehicles,
+  createVehicleRental,
+  updateVehicleRental,
+  type VehicleListItem,
+} from "../../api/vehicles";
 import { useAuthStore } from "../../store/authStore";
 import { DocumentUpload } from "../../components/documents/DocumentUpload";
 import { DocumentList } from "../../components/documents/DocumentList";
@@ -51,6 +58,8 @@ export function DriverDetailPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [notesEdit, setNotesEdit] = useState(false);
   const [notesValue, setNotesValue] = useState("");
+  const [assignVehicleOpen, setAssignVehicleOpen] = useState(false);
+  const [endRentalConfirm, setEndRentalConfirm] = useState(false);
 
   const { data: driverRes, isLoading: loadingDriver, isError: driverError } = useQuery({
     queryKey: ["driver", id],
@@ -64,8 +73,25 @@ export function DriverDetailPage() {
     enabled: !!id && tab === "activity",
   });
 
+  const { data: activeRentalRes } = useQuery({
+    queryKey: ["driverActiveRental", id],
+    queryFn: () => getDriverActiveRental(id!),
+    enabled: !!id && tab === "profile",
+  });
+
+  const { data: availableVehiclesRes } = useQuery({
+    queryKey: ["vehicles", "available"],
+    queryFn: async () => {
+      const { data } = await getVehicles({ status: "available" });
+      return data;
+    },
+    enabled: !!id && assignVehicleOpen,
+  });
+
   const driver = driverRes?.data;
   const activities = activityRes?.data ?? [];
+  const activeRental = activeRentalRes?.data ?? null;
+  const availableVehicles = availableVehiclesRes ?? [];
 
   const notesMutation = useMutation({
     mutationFn: (notes: string | null) => updateDriverNotes(id!, notes),
@@ -82,6 +108,44 @@ export function DriverDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["drivers"] });
       setDeleteModalOpen(false);
       navigate("/drivers");
+    },
+  });
+
+  const assignVehicleMutation = useMutation({
+    mutationFn: ({
+      vehicleId,
+      payload,
+    }: {
+      vehicleId: string;
+      payload: {
+        driverId: string;
+        rentalStartDate: string;
+        rentalEndDate: string;
+        rentalType?: "daily" | "weekly" | "monthly";
+        totalRentAmount?: number;
+        depositAmount?: number;
+        notes?: string;
+      };
+    }) => createVehicleRental(vehicleId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["driver", id] });
+      queryClient.invalidateQueries({ queryKey: ["driverActiveRental", id] });
+      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      setAssignVehicleOpen(false);
+    },
+  });
+
+  const endRentalMutation = useMutation({
+    mutationFn: async () => {
+      const rental = activeRental;
+      if (!rental) throw new Error("No active rental");
+      return updateVehicleRental(rental.vehicle_id, rental.rental_id, { status: "completed" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["driver", id] });
+      queryClient.invalidateQueries({ queryKey: ["driverActiveRental", id] });
+      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      setEndRentalConfirm(false);
     },
   });
 
@@ -226,6 +290,44 @@ export function DriverDetailPage() {
             </section>
 
             <section className="bg-white rounded-xl shadow-sm p-6">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-slate-800">Current vehicle</h2>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => setAssignVehicleOpen(true)}
+                    className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700"
+                  >
+                    Assign vehicle
+                  </button>
+                )}
+              </div>
+              {d.current_vehicle_id ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    to={`/vehicles/${d.current_vehicle_id}`}
+                    className="font-medium text-sky-600 hover:text-sky-800"
+                  >
+                    {d.current_vehicle_year != null ? `${d.current_vehicle_year} ` : ""}
+                    {d.current_vehicle_make ?? ""} {d.current_vehicle_model ?? ""}
+                    {d.current_vehicle_license_plate ? ` (${d.current_vehicle_license_plate})` : ""}
+                  </Link>
+                  {canEdit && activeRental && (
+                    <button
+                      type="button"
+                      onClick={() => setEndRentalConfirm(true)}
+                      className="rounded-md border border-amber-300 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
+                    >
+                      End rental
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No vehicle assigned.</p>
+              )}
+            </section>
+
+            <section className="bg-white rounded-xl shadow-sm p-6">
               <h2 className="text-sm font-semibold text-slate-800 mb-3">Notes</h2>
               {!notesEdit ? (
                 <div className="flex items-start justify-between gap-2">
@@ -351,6 +453,214 @@ export function DriverDetailPage() {
           </div>
         </div>
       )}
+
+      {assignVehicleOpen && (
+        <AssignVehicleModal
+          availableVehicles={availableVehicles}
+          onClose={() => setAssignVehicleOpen(false)}
+          onSubmit={(payload) =>
+            assignVehicleMutation.mutate({
+              vehicleId: payload.vehicleId,
+              payload: {
+                driverId: id!,
+                rentalStartDate: payload.rentalStartDate,
+                rentalEndDate: payload.rentalEndDate,
+                rentalType: payload.rentalType,
+                totalRentAmount: payload.totalRentAmount,
+                depositAmount: payload.depositAmount,
+                notes: payload.notes,
+              },
+            })
+          }
+          isSubmitting={assignVehicleMutation.isPending}
+        />
+      )}
+
+      {endRentalConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-semibold text-slate-900">End rental?</h3>
+            <p className="text-sm text-slate-600 mt-2">
+              This will mark the current rental as completed and unassign the vehicle from this driver.
+            </p>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => endRentalMutation.mutate()}
+                disabled={endRentalMutation.isPending}
+                className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+              >
+                {endRentalMutation.isPending ? "Ending..." : "End rental"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEndRentalConfirm(false)}
+                disabled={endRentalMutation.isPending}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssignVehicleModal({
+  availableVehicles,
+  onClose,
+  onSubmit,
+  isSubmitting,
+}: {
+  availableVehicles: VehicleListItem[];
+  onClose: () => void;
+  onSubmit: (payload: {
+    vehicleId: string;
+    rentalStartDate: string;
+    rentalEndDate: string;
+    rentalType?: "daily" | "weekly" | "monthly";
+    totalRentAmount?: number;
+    depositAmount?: number;
+    notes?: string;
+  }) => void;
+  isSubmitting: boolean;
+}) {
+  const [vehicleId, setVehicleId] = useState("");
+  const [rentalStartDate, setRentalStartDate] = useState("");
+  const [rentalEndDate, setRentalEndDate] = useState("");
+  const [rentalType, setRentalType] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [depositAmount, setDepositAmount] = useState<number | "">("");
+  const [notes, setNotes] = useState("");
+
+  const selectedVehicle = availableVehicles.find((v) => v.id === vehicleId);
+  const totalRentAmount =
+    selectedVehicle && rentalType === "daily"
+      ? Number(selectedVehicle.daily_rent)
+      : selectedVehicle && rentalType === "weekly"
+        ? Number(selectedVehicle.weekly_rent)
+        : selectedVehicle && rentalType === "monthly"
+          ? Number(selectedVehicle.monthly_rent)
+          : undefined;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vehicleId || !rentalStartDate || !rentalEndDate) return;
+    onSubmit({
+      vehicleId,
+      rentalStartDate,
+      rentalEndDate,
+      rentalType,
+      totalRentAmount,
+      depositAmount: depositAmount === "" ? undefined : Number(depositAmount),
+      notes: notes.trim() || undefined,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <h3 className="text-lg font-semibold text-slate-900">Assign vehicle</h3>
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Vehicle *</label>
+            <select
+              required
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={vehicleId}
+              onChange={(e) => setVehicleId(e.target.value)}
+            >
+              <option value="">Select vehicle</option>
+              {availableVehicles.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.year ? `${v.year} ` : ""}
+                  {v.make} {v.model} ({v.license_plate})
+                </option>
+              ))}
+            </select>
+            {availableVehicles.length === 0 && (
+              <p className="text-xs text-slate-500 mt-1">No available vehicles.</p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Start date *</label>
+              <input
+                type="date"
+                required
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={rentalStartDate}
+                onChange={(e) => setRentalStartDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">End date *</label>
+              <input
+                type="date"
+                required
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={rentalEndDate}
+                onChange={(e) => setRentalEndDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Rental type</label>
+            <select
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={rentalType}
+              onChange={(e) => setRentalType(e.target.value as "daily" | "weekly" | "monthly")}
+            >
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+            {totalRentAmount != null && (
+              <p className="text-xs text-slate-500 mt-1">
+                Amount: {new Intl.NumberFormat("ro-RO", { style: "currency", currency: "RON" }).format(totalRentAmount)}
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Deposit (RON)</label>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={depositAmount === "" ? "" : depositAmount}
+              onChange={(e) => setDepositAmount(e.target.value ? parseFloat(e.target.value) : "")}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+            <textarea
+              rows={2}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button
+              type="submit"
+              disabled={isSubmitting || availableVehicles.length === 0}
+              className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+            >
+              {isSubmitting ? "Assigning..." : "Assign vehicle"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSubmitting}
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

@@ -28,3 +28,15 @@ export { deleteDriver };
 export function getDriverActivity(id: string) {
   return api.get<DriverActivity[]>(`/drivers/${id}/activity`);
 }
+
+export interface DriverActiveRental {
+  rental_id: string;
+  vehicle_id: string;
+  rental_start_date: string;
+  rental_end_date: string;
+  status: string;
+}
+
+export function getDriverActiveRental(driverId: string) {
+  return api.get<DriverActiveRental | null>(`/drivers/${driverId}/active-rental`);
+}

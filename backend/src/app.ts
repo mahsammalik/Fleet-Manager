@@ -5,6 +5,7 @@ import { authRoutes } from "./modules/auth/routes";
 import { driverRoutes } from "./modules/drivers/routes";
 import { documentRoutes } from "./modules/documents/routes";
 import { dashboardRoutes } from "./modules/dashboard/routes";
+import { vehicleRoutes } from "./modules/vehicles/routes";
 
 export const app = express();
 
@@ -24,6 +25,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/drivers", documentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/vehicles", vehicleRoutes);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
