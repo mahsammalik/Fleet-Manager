@@ -2,32 +2,19 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import { deleteDriver } from "../../api/drivers";
+import { deleteDriver, type DriverListItem } from "../../api/drivers";
 import { useAuthStore } from "../../store/authStore";
-
-interface Driver {
-  id: string;
-  first_name: string;
-  last_name: string;
-  phone: string;
-  email: string | null;
-  employment_status: string;
-  commission_rate: string;
-  uber_driver_id: string | null;
-  bolt_driver_id: string | null;
-  glovo_courier_id?: string | null;
-  bolt_courier_id?: string | null;
-}
+import { DriverAvatar } from "../../components/drivers/DriverAvatar";
 
 export function DriversListPage() {
   const user = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
-  const [deleteTarget, setDeleteTarget] = useState<Driver | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DriverListItem | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["drivers"],
     queryFn: async () => {
-      const { data } = await api.get<Driver[]>("/drivers");
+      const { data } = await api.get<DriverListItem[]>("/drivers");
       return data;
     },
   });
@@ -69,6 +56,7 @@ export function DriversListPage() {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50">
                 <tr>
+                  <th className="px-3 py-2 text-left font-medium text-slate-700 w-12">Photo</th>
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Name</th>
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Phone</th>
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
@@ -80,6 +68,16 @@ export function DriversListPage() {
               <tbody>
                 {data?.map((driver) => (
                   <tr key={driver.id} className="border-t border-slate-100">
+                    <td className="px-3 py-2">
+                      <Link to={`/drivers/${driver.id}`} className="flex items-center gap-2">
+                        <DriverAvatar
+                          profilePhotoUrl={driver.profile_photo_url}
+                          firstName={driver.first_name}
+                          lastName={driver.last_name}
+                          size="sm"
+                        />
+                      </Link>
+                    </td>
                     <td className="px-3 py-2">
                       <Link
                         to={`/drivers/${driver.id}`}
@@ -115,7 +113,7 @@ export function DriversListPage() {
                 ))}
                 {data?.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-4 text-center text-sm text-slate-500">
+                    <td colSpan={7} className="px-3 py-4 text-center text-sm text-slate-500">
                       No drivers yet.
                     </td>
                   </tr>

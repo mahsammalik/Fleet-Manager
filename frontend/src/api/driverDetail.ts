@@ -40,3 +40,5 @@ export interface DriverActiveRental {
 export function getDriverActiveRental(driverId: string) {
   return api.get<DriverActiveRental | null>(`/drivers/${driverId}/active-rental`);
 }
+
+export { uploadDriverPhoto } from "./drivers";

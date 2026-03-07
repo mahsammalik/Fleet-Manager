@@ -78,3 +78,33 @@ export const driverDocumentsUpload = multer({
   },
   limits: { fileSize: MAX_SIZE },
 });
+
+// Profile photos: images only, 2MB, stored in uploads/driver-photos/:driverId
+const profilePhotoRoot = path.join(process.cwd(), "uploads", "driver-photos");
+const PROFILE_PHOTO_MIMES = ["image/jpeg", "image/jpg", "image/png"];
+const PROFILE_PHOTO_EXT = [".jpg", ".jpeg", ".png"];
+const PROFILE_PHOTO_MAX_SIZE = 2 * 1024 * 1024; // 2MB
+
+export const driverProfilePhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const dir = path.join(profilePhotoRoot, id ?? "");
+      ensureDir(profilePhotoRoot);
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+      cb(null, `profile${ext}`);
+    },
+  }),
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowed =
+      PROFILE_PHOTO_MIMES.includes(file.mimetype) || PROFILE_PHOTO_EXT.includes(ext);
+    if (allowed) cb(null, true);
+    else cb(new Error("Profile photo must be JPG or PNG"));
+  },
+  limits: { fileSize: PROFILE_PHOTO_MAX_SIZE },
+});

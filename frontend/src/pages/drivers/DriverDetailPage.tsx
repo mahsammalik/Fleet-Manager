@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -7,9 +7,11 @@ import {
   deleteDriver,
   getDriverActivity,
   getDriverActiveRental,
+  uploadDriverPhoto,
   type Driver,
   type DriverActivity,
 } from "../../api/driverDetail";
+import { DriverAvatar } from "../../components/drivers/DriverAvatar";
 import {
   getVehicles,
   createVehicleRental,
@@ -41,6 +43,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 const ACTIVITY_LABELS: Record<string, string> = {
   profile_update: "Profile updated",
+  profile_photo_update: "Profile photo updated",
   status_change: "Status changed",
   document_upload: "Document uploaded",
   document_verify: "Document verified",
@@ -60,6 +63,7 @@ export function DriverDetailPage() {
   const [notesValue, setNotesValue] = useState("");
   const [assignVehicleOpen, setAssignVehicleOpen] = useState(false);
   const [endRentalConfirm, setEndRentalConfirm] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const { data: driverRes, isLoading: loadingDriver, isError: driverError } = useQuery({
     queryKey: ["driver", id],
@@ -149,6 +153,15 @@ export function DriverDetailPage() {
     },
   });
 
+  const photoMutation = useMutation({
+    mutationFn: (file: File) => uploadDriverPhoto(id!, file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["driver", id] });
+      queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      if (photoInputRef.current) photoInputRef.current.value = "";
+    },
+  });
+
   const canEdit = user?.role === "admin" || user?.role === "accountant";
   const canDelete = user?.role === "admin" || user?.role === "accountant";
 
@@ -189,16 +202,48 @@ export function DriverDetailPage() {
     <div className="min-h-full bg-slate-100">
       <header className="bg-white border-b border-slate-200 px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <Link to="/drivers" className="text-sm text-slate-600 hover:text-slate-900">
-                ← Back to drivers
-              </Link>
+          <div className="flex items-start gap-4">
+            <div className="relative shrink-0">
+              <DriverAvatar
+                profilePhotoUrl={d.profile_photo_url}
+                firstName={d.first_name}
+                lastName={d.last_name}
+                size="lg"
+              />
+              {canEdit && (
+                <div className="mt-2">
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) photoMutation.mutate(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    disabled={photoMutation.isPending}
+                    className="text-xs text-sky-600 hover:text-sky-800 font-medium disabled:opacity-60"
+                  >
+                    {photoMutation.isPending ? "Uploading..." : "Change photo"}
+                  </button>
+                </div>
+              )}
             </div>
-            <h1 className="text-xl font-semibold text-slate-900 mt-1">
-              {d.first_name} {d.last_name}
-            </h1>
-            <p className="text-xs text-slate-500 font-mono mt-0.5">ID: {id}</p>
+            <div>
+              <div className="flex items-center gap-3">
+                <Link to="/drivers" className="text-sm text-slate-600 hover:text-slate-900">
+                  ← Back to drivers
+                </Link>
+              </div>
+              <h1 className="text-xl font-semibold text-slate-900 mt-1">
+                {d.first_name} {d.last_name}
+              </h1>
+              <p className="text-xs text-slate-500 font-mono mt-0.5">ID: {id}</p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {canEdit && (
