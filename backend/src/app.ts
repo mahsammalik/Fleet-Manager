@@ -37,8 +37,10 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   if (m.code === "LIMIT_FILE_SIZE") {
     return res.status(413).json({ message: "File too large. Maximum size is 10MB." });
   }
-  if (m.message && typeof m.message === "string" && m.message.includes("Only PDF")) {
-    return res.status(400).json({ message: m.message });
+  if (m.message && typeof m.message === "string") {
+    if (m.message.includes("Only PDF") || m.message.includes("Profile photo") || m.message.includes("JPG or PNG")) {
+      return res.status(400).json({ message: m.message });
+    }
   }
   return res.status(500).json({ message: "Internal server error" });
 });

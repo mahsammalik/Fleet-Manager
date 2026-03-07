@@ -1,7 +1,10 @@
 import { Router } from "express";
+import path from "path";
+import fs from "fs";
 import { authenticateJWT, requireRole } from "../../middleware/auth";
 import { query } from "../../db/pool";
 import { logDriverActivity } from "./activity";
+import { driverProfilePhotoUpload } from "../../config/multer";
 
 const router = Router();
 
@@ -44,7 +47,7 @@ router.get("/", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT id, first_name, last_name, phone, email, employment_status, commission_rate, uber_driver_id, bolt_driver_id, glovo_courier_id, bolt_courier_id
+      SELECT id, first_name, last_name, phone, email, employment_status, commission_rate, profile_photo_url, uber_driver_id, bolt_driver_id, glovo_courier_id, bolt_courier_id
       FROM drivers
       ${where}
       ORDER BY created_at DESC
@@ -91,6 +94,67 @@ router.get("/:id/active-rental", async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 });
+
+router.patch(
+  "/:id/photo",
+  requireRole("admin", "accountant"),
+  driverProfilePhotoUpload.single("photo"),
+  async (req, res) => {
+    const orgId = req.user?.orgId;
+    const userId = req.user?.sub;
+    const { id } = req.params;
+
+    if (!orgId) {
+      return res.status(400).json({ message: "User is not associated with an organization" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ message: "Photo file is required" });
+    }
+
+    try {
+      const { rows: existing } = await query<{ profile_photo_url: string | null }>(
+        "SELECT profile_photo_url FROM drivers WHERE id = $1 AND organization_id = $2 LIMIT 1",
+        [id, orgId],
+      );
+      if (!existing[0]) {
+        return res.status(404).json({ message: "Driver not found" });
+      }
+
+      const relativePath = path.relative(process.cwd(), req.file.path).replace(/\\/g, "/");
+
+      const { rows } = await query(
+        `UPDATE drivers
+         SET profile_photo_url = $1, profile_photo_updated_at = NOW(), updated_at = NOW()
+         WHERE id = $2 AND organization_id = $3
+         RETURNING *`,
+        [relativePath, id, orgId],
+      );
+
+      const oldPath = existing[0].profile_photo_url;
+      if (oldPath) {
+        const absoluteOld = path.join(process.cwd(), oldPath);
+        if (fs.existsSync(absoluteOld)) {
+          try {
+            fs.unlinkSync(absoluteOld);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      await logDriverActivity(String(id), "profile_photo_update", {
+        description: "Profile photo updated",
+        performedBy: userId ?? undefined,
+        newValues: { profile_photo_url: relativePath },
+      });
+
+      return res.json(rows[0]);
+    } catch (err) {
+      console.error("Update driver photo error", err);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  },
+);
 
 router.get("/:id", async (req, res) => {
   const orgId = req.user?.orgId;

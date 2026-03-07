@@ -8,6 +8,7 @@ export interface DriverListItem {
   email: string | null;
   employment_status: string;
   commission_rate: string;
+  profile_photo_url?: string | null;
   uber_driver_id: string | null;
   bolt_driver_id: string | null;
   glovo_courier_id?: string | null;
@@ -37,6 +38,8 @@ export interface Driver extends DriverListItem {
   current_vehicle_model?: string | null;
   current_vehicle_license_plate?: string | null;
   current_vehicle_year?: number | null;
+  profile_photo_url?: string | null;
+  profile_photo_updated_at?: string | null;
 }
 
 export interface CreateDriverPayload {
@@ -88,4 +91,12 @@ export function updateDriver(id: string, data: Partial<CreateDriverPayload>) {
 
 export function deleteDriver(id: string) {
   return api.delete<Driver>(`/drivers/${id}`);
+}
+
+export function uploadDriverPhoto(driverId: string, file: File) {
+  const formData = new FormData();
+  formData.append("photo", file);
+  return api.patch<Driver>(`/drivers/${driverId}/photo`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
 }

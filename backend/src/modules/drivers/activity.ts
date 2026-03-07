@@ -2,6 +2,7 @@ import { query } from "../../db/pool";
 
 export type ActivityType =
   | "profile_update"
+  | "profile_photo_update"
   | "status_change"
   | "document_upload"
   | "document_verify"

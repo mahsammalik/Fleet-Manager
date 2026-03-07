@@ -33,6 +33,12 @@ ALTER TABLE drivers
   ADD COLUMN IF NOT EXISTS current_vehicle_id UUID REFERENCES vehicles(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_drivers_current_vehicle ON drivers(current_vehicle_id);
 
+-- Add profile photo to drivers
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS profile_photo_url VARCHAR(500),
+  ADD COLUMN IF NOT EXISTS profile_photo_updated_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_drivers_profile_photo ON drivers(profile_photo_url);
+
 -- Vehicle Rentals Table (full history)
 CREATE TABLE IF NOT EXISTS vehicle_rentals (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
