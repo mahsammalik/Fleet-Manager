@@ -61,6 +61,37 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/:id/active-rental", async (req, res) => {
+  const orgId = req.user?.orgId;
+  const { id } = req.params;
+
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+
+  try {
+    const { rows } = await query(
+      `
+      SELECT r.id AS rental_id, r.vehicle_id, r.rental_start_date, r.rental_end_date, r.status
+      FROM vehicle_rentals r
+      WHERE r.driver_id = $1 AND r.organization_id = $2 AND r.status = 'active'
+      ORDER BY r.rental_start_date DESC
+      LIMIT 1
+      `,
+      [id, orgId],
+    );
+
+    const rental = rows[0];
+    if (!rental) {
+      return res.json(null);
+    }
+    return res.json(rental);
+  } catch (err) {
+    console.error("Get driver active rental error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   const orgId = req.user?.orgId;
   const { id } = req.params;
@@ -72,9 +103,15 @@ router.get("/:id", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT *
-      FROM drivers
-      WHERE id = $1 AND organization_id = $2 AND (is_deleted = false OR is_deleted IS NULL)
+      SELECT d.*,
+             v.id AS current_vehicle_id,
+             v.make AS current_vehicle_make,
+             v.model AS current_vehicle_model,
+             v.license_plate AS current_vehicle_license_plate,
+             v.year AS current_vehicle_year
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.current_vehicle_id = v.id
+      WHERE d.id = $1 AND d.organization_id = $2 AND (d.is_deleted = false OR d.is_deleted IS NULL)
       LIMIT 1
       `,
       [id, orgId],

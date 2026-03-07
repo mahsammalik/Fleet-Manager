@@ -5,6 +5,8 @@ const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { to: "/drivers", label: "Drivers", icon: DriversIcon },
   { to: "/drivers/new", label: "Add driver", icon: AddIcon },
+  { to: "/vehicles", label: "Vehicles", icon: VehiclesIcon },
+  { to: "/vehicles/new", label: "Add vehicle", icon: AddIcon },
 ];
 
 function DashboardIcon({ className }: { className?: string }) {
@@ -30,6 +32,15 @@ function AddIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+    </svg>
+  );
+}
+
+function VehiclesIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8m-8 4h8m-8 4h4m4 0h4m-4-4h4m-4-4h4" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 17h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
     </svg>
   );
 }

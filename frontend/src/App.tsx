@@ -9,6 +9,10 @@ import { EditDriverPage } from "./pages/drivers/EditDriverPage";
 import { DriverDetailPage } from "./pages/drivers/DriverDetailPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { RegisterPage } from "./pages/register/Register";
+import { VehiclesListPage } from "./pages/vehicles/VehiclesListPage";
+import { AddVehiclePage } from "./pages/vehicles/AddVehiclePage";
+import { EditVehiclePage } from "./pages/vehicles/EditVehiclePage";
+import { VehicleDetailPage } from "./pages/vehicles/VehicleDetailPage";
 
 function ProtectedRoute({ children }: { children: React.ReactElement }) {
   const token = useAuthStore((s) => s.token);
@@ -60,6 +64,38 @@ export default function App() {
         element={
           <ProtectedRoute>
             <DriverDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vehicles"
+        element={
+          <ProtectedRoute>
+            <VehiclesListPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vehicles/new"
+        element={
+          <ProtectedRoute>
+            <AddVehiclePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vehicles/:id/edit"
+        element={
+          <ProtectedRoute>
+            <EditVehiclePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vehicles/:id"
+        element={
+          <ProtectedRoute>
+            <VehicleDetailPage />
           </ProtectedRoute>
         }
       />

@@ -32,6 +32,11 @@ export interface Driver extends DriverListItem {
   updated_at: string;
   organization_id: string;
   user_id: string | null;
+  current_vehicle_id?: string | null;
+  current_vehicle_make?: string | null;
+  current_vehicle_model?: string | null;
+  current_vehicle_license_plate?: string | null;
+  current_vehicle_year?: number | null;
 }
 
 export interface CreateDriverPayload {
