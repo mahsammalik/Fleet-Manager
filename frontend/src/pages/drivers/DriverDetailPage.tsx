@@ -11,6 +11,10 @@ import {
   type Driver,
   type DriverActivity,
 } from "../../api/driverDetail";
+import {
+  PLATFORM_IDS,
+  PLATFORM_ID_LABELS,
+} from "../../constants/platformIds";
 import { DriverAvatar } from "../../components/drivers/DriverAvatar";
 import {
   getVehicles,
@@ -327,10 +331,36 @@ export function DriverDetailPage() {
             <section className="bg-white rounded-xl shadow-sm p-6">
               <h2 className="text-sm font-semibold text-slate-800 mb-3">Platform IDs</h2>
               <dl className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                <div><dt className="text-slate-500">Uber driver ID</dt><dd>{d.uber_driver_id ?? "—"}</dd></div>
-                <div><dt className="text-slate-500">Bolt driver ID</dt><dd>{d.bolt_driver_id ?? "—"}</dd></div>
-                <div><dt className="text-slate-500">Glovo courier ID</dt><dd>{d.glovo_courier_id ?? "—"}</dd></div>
-                <div><dt className="text-slate-500">Bolt courier ID</dt><dd>{d.bolt_courier_id ?? "—"}</dd></div>
+                <div>
+                  <dt className="text-slate-500">
+                    {PLATFORM_ID_LABELS[PLATFORM_IDS.UBER]} driver ID
+                  </dt>
+                  <dd>{d.uber_driver_id ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">
+                    {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT]} driver ID
+                  </dt>
+                  <dd>{d.bolt_driver_id ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">
+                    {PLATFORM_ID_LABELS[PLATFORM_IDS.GLOVO]} courier ID
+                  </dt>
+                  <dd>{d.glovo_courier_id ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">
+                    {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT_COURIER]} ID
+                  </dt>
+                  <dd>{d.bolt_courier_id ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">
+                    {PLATFORM_ID_LABELS[PLATFORM_IDS.WOLT]} courier ID
+                  </dt>
+                  <dd>{d.wolt_courier_id ?? "—"}</dd>
+                </div>
               </dl>
             </section>
 

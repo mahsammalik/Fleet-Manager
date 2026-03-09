@@ -13,6 +13,7 @@ export interface DriverListItem {
   bolt_driver_id: string | null;
   glovo_courier_id?: string | null;
   bolt_courier_id?: string | null;
+   wolt_courier_id?: string | null;
 }
 
 export type CommissionType = "percentage" | "fixed_amount" | "hybrid";
@@ -40,6 +41,9 @@ export interface Driver extends DriverListItem {
   current_vehicle_year?: number | null;
   profile_photo_url?: string | null;
   profile_photo_updated_at?: string | null;
+  wolt_courier_id?: string | null;
+  wolt_courier_verified?: boolean;
+  wolt_courier_verified_at?: string | null;
 }
 
 export interface CreateDriverPayload {
@@ -63,6 +67,7 @@ export interface CreateDriverPayload {
   boltDriverId?: string;
   glovoCourierId?: string;
   boltCourierId?: string;
+  woltCourierId?: string;
   notes?: string;
 }
 

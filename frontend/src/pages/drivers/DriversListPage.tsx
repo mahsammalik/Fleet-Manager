@@ -3,6 +3,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { deleteDriver, type DriverListItem } from "../../api/drivers";
+import {
+  PLATFORM_IDS,
+  PLATFORM_ID_LABELS,
+} from "../../constants/platformIds";
 import { useAuthStore } from "../../store/authStore";
 import { DriverAvatar } from "../../components/drivers/DriverAvatar";
 
@@ -90,7 +94,11 @@ export function DriversListPage() {
                     <td className="px-3 py-2 capitalize">{driver.employment_status}</td>
                     <td className="px-3 py-2">{driver.commission_rate}%</td>
                     <td className="px-3 py-2 text-xs text-slate-600">
-                      Uber: {driver.uber_driver_id || "-"} · Bolt: {driver.bolt_driver_id || "-"} · Glovo: {driver.glovo_courier_id || "-"} · Bolt C: {driver.bolt_courier_id || "-"}
+                      {PLATFORM_ID_LABELS[PLATFORM_IDS.UBER]}: {driver.uber_driver_id || "-"} ·{" "}
+                      {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT]}: {driver.bolt_driver_id || "-"} ·{" "}
+                      {PLATFORM_ID_LABELS[PLATFORM_IDS.GLOVO]}: {driver.glovo_courier_id || "-"} ·{" "}
+                      {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT_COURIER]}: {driver.bolt_courier_id || "-"} ·{" "}
+                      {PLATFORM_ID_LABELS[PLATFORM_IDS.WOLT]}: {driver.wolt_courier_id || "-"}
                     </td>
                     <td className="px-3 py-2 flex items-center gap-3">
                       <Link

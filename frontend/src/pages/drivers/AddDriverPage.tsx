@@ -7,6 +7,10 @@ import {
   type CreateDriverPayload,
   type CommissionType,
 } from "../../api/drivers";
+import {
+  PLATFORM_IDS,
+  PLATFORM_ID_LABELS,
+} from "../../constants/platformIds";
 import { CommissionInput } from "../../components/drivers/CommissionInput";
 
 const EMPLOYMENT_STATUSES = [
@@ -53,6 +57,7 @@ export function AddDriverPage() {
     boltDriverId: "",
     glovoCourierId: "",
     boltCourierId: "",
+    woltCourierId: "",
     notes: "",
   });
   const [commissionErrors, setCommissionErrors] = useState<Partial<Record<string, string>>>({});
@@ -117,14 +122,22 @@ export function AddDriverPage() {
       boltDriverId: form.boltDriverId?.trim() || undefined,
       glovoCourierId: form.glovoCourierId?.trim() || undefined,
       boltCourierId: form.boltCourierId?.trim() || undefined,
+      woltCourierId: form.woltCourierId?.trim() || undefined,
       notes: form.notes?.trim() || undefined,
     };
     mutation.mutate(payload);
   };
 
   const update = (
-    key: keyof CreateDriverPayload | "commissionType" | "fixedCommissionAmount" | "minimumCommission" | "glovoCourierId" | "boltCourierId",
-    value: string | number | undefined
+    key:
+      | keyof CreateDriverPayload
+      | "commissionType"
+      | "fixedCommissionAmount"
+      | "minimumCommission"
+      | "glovoCourierId"
+      | "boltCourierId"
+      | "woltCourierId",
+    value: string | number | undefined,
   ) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
@@ -305,7 +318,9 @@ export function AddDriverPage() {
             <h2 className="text-sm font-semibold text-slate-800 mb-3">Platform IDs</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Uber driver ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.UBER]} driver ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
@@ -314,7 +329,9 @@ export function AddDriverPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Bolt driver ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT]} driver ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
@@ -323,7 +340,9 @@ export function AddDriverPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Glovo courier ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.GLOVO]} courier ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
@@ -332,12 +351,25 @@ export function AddDriverPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Bolt courier ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT_COURIER]} ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
                   value={form.boltCourierId ?? ""}
                   onChange={(e) => update("boltCourierId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.WOLT]} courier ID
+                </label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  value={form.woltCourierId ?? ""}
+                  onChange={(e) => update("woltCourierId", e.target.value)}
                 />
               </div>
             </div>
