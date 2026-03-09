@@ -13,6 +13,7 @@ import { VehiclesListPage } from "./pages/vehicles/VehiclesListPage";
 import { AddVehiclePage } from "./pages/vehicles/AddVehiclePage";
 import { EditVehiclePage } from "./pages/vehicles/EditVehiclePage";
 import { VehicleDetailPage } from "./pages/vehicles/VehicleDetailPage";
+import { VehicleDocumentsPage } from "./pages/vehicles/VehicleDocumentsPage";
 
 function ProtectedRoute({ children }: { children: React.ReactElement }) {
   const token = useAuthStore((s) => s.token);
@@ -96,6 +97,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <VehicleDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vehicles/:id/documents"
+        element={
+          <ProtectedRoute>
+            <VehicleDocumentsPage />
           </ProtectedRoute>
         }
       />
