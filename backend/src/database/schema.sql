@@ -39,6 +39,13 @@ ALTER TABLE drivers
   ADD COLUMN IF NOT EXISTS profile_photo_updated_at TIMESTAMP;
 CREATE INDEX IF NOT EXISTS idx_drivers_profile_photo ON drivers(profile_photo_url);
 
+-- Add Wolt courier fields to drivers
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS wolt_courier_id VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS wolt_courier_verified BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS wolt_courier_verified_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_drivers_wolt_courier_id ON drivers(wolt_courier_id);
+
 -- Vehicle Rentals Table (full history)
 CREATE TABLE IF NOT EXISTS vehicle_rentals (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

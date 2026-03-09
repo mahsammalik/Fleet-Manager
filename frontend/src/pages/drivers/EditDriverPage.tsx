@@ -9,6 +9,10 @@ import {
   type CommissionType,
   type Driver,
 } from "../../api/drivers";
+import {
+  PLATFORM_IDS,
+  PLATFORM_ID_LABELS,
+} from "../../constants/platformIds";
 import { CommissionInput } from "../../components/drivers/CommissionInput";
 import { DocumentUpload } from "../../components/documents/DocumentUpload";
 import { DocumentList } from "../../components/documents/DocumentList";
@@ -63,6 +67,7 @@ function driverToForm(
     boltDriverId: d.bolt_driver_id ?? "",
     glovoCourierId: d.glovo_courier_id ?? "",
     boltCourierId: d.bolt_courier_id ?? "",
+    woltCourierId: d.wolt_courier_id ?? "",
     notes: d.notes ?? "",
   };
 }
@@ -387,7 +392,9 @@ export function EditDriverPage() {
             <h2 className="text-sm font-semibold text-slate-800 mb-3">Platform IDs</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Uber driver ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.UBER]} driver ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
@@ -396,7 +403,9 @@ export function EditDriverPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Bolt driver ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT]} driver ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
@@ -405,7 +414,9 @@ export function EditDriverPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Glovo courier ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.GLOVO]} courier ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
@@ -414,12 +425,25 @@ export function EditDriverPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Bolt courier ID</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT_COURIER]} ID
+                </label>
                 <input
                   type="text"
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
                   value={form.boltCourierId ?? ""}
                   onChange={(e) => update("boltCourierId", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {PLATFORM_ID_LABELS[PLATFORM_IDS.WOLT]} courier ID
+                </label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  value={form.woltCourierId ?? ""}
+                  onChange={(e) => update("woltCourierId", e.target.value)}
                 />
               </div>
             </div>

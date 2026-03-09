@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS drivers (
     bolt_driver_id VARCHAR(100),
     glovo_courier_id VARCHAR(100),
     bolt_courier_id VARCHAR(100),
+    wolt_courier_id VARCHAR(100),
+    wolt_courier_verified BOOLEAN DEFAULT false,
+    wolt_courier_verified_at TIMESTAMP,
     notes TEXT,
     profile_photo_url VARCHAR(500),
     profile_photo_updated_at TIMESTAMP,
@@ -101,6 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_drivers_status ON drivers(employment_status);
 CREATE INDEX IF NOT EXISTS idx_drivers_profile_photo ON drivers(profile_photo_url);
 CREATE INDEX IF NOT EXISTS idx_drivers_glovo_id ON drivers(glovo_courier_id);
 CREATE INDEX IF NOT EXISTS idx_drivers_bolt_courier_id ON drivers(bolt_courier_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_wolt_courier_id ON drivers(wolt_courier_id);
 CREATE INDEX IF NOT EXISTS idx_driver_documents_driver ON driver_documents(driver_id);
 CREATE INDEX IF NOT EXISTS idx_driver_documents_organization ON driver_documents(organization_id);
 CREATE INDEX IF NOT EXISTS idx_driver_documents_type ON driver_documents(document_type);
