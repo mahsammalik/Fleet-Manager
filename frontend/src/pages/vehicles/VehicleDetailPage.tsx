@@ -14,11 +14,13 @@ import {
   type CreateRentalPayload,
   type CreateMaintenancePayload,
 } from "../../api/vehicles";
+import { VehicleDocumentUpload } from "../../components/vehicles/VehicleDocumentUpload";
+import { VehicleDocumentList } from "../../components/vehicles/VehicleDocumentList";
 import { getDrivers } from "../../api/drivers";
 import { useAuthStore } from "../../store/authStore";
 import { formatCurrency } from "../../utils/currency";
 
-type TabId = "profile" | "rentals" | "maintenance";
+type TabId = "profile" | "rentals" | "maintenance" | "documents";
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -206,7 +208,7 @@ export function VehicleDetailPage() {
         </div>
 
         <nav className="flex gap-1 mt-4 border-b border-slate-200">
-          {(["profile", "rentals", "maintenance"] as TabId[]).map((t) => (
+          {(["profile", "rentals", "maintenance", "documents"] as TabId[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -402,6 +404,21 @@ export function VehicleDetailPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {tab === "documents" && (
+          <div className="space-y-6">
+            {canEdit && (
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <h2 className="text-sm font-semibold text-slate-800 mb-3">Upload new document</h2>
+                <VehicleDocumentUpload vehicleId={id} />
+              </div>
+            )}
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <h2 className="text-sm font-semibold text-slate-800 mb-3">Documents</h2>
+              <VehicleDocumentList vehicleId={id} />
             </div>
           </div>
         )}

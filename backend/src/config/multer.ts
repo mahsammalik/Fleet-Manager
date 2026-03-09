@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 
 const uploadRoot = path.join(process.cwd(), "uploads", "driver-documents");
+const vehicleUploadRoot = path.join(process.cwd(), "uploads", "vehicle-documents");
 
 const ALLOWED_MIMES = [
   "application/pdf",
@@ -107,4 +108,29 @@ export const driverProfilePhotoUpload = multer({
     else cb(new Error("Profile photo must be JPG or PNG"));
   },
   limits: { fileSize: PROFILE_PHOTO_MAX_SIZE },
+});
+
+export const vehicleDocumentsUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const dir = path.join(vehicleUploadRoot, id ?? "");
+      ensureDir(vehicleUploadRoot);
+      ensureDir(dir);
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const timestamp = Date.now();
+      const ext = path.extname(file.originalname) || "";
+      const base = path.basename(file.originalname, ext).replace(/\s+/g, "_");
+      cb(null, `${timestamp}-${base}${ext.toLowerCase()}`);
+    },
+  }),
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowed = ALLOWED_MIMES.includes(file.mimetype) || ALLOWED_EXT.includes(ext);
+    if (allowed) cb(null, true);
+    else cb(new Error("Only PDF, JPG and PNG files are allowed"));
+  },
+  limits: { fileSize: MAX_SIZE },
 });
