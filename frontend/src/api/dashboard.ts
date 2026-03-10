@@ -7,6 +7,8 @@ export interface DashboardStats {
   expiredDocuments: number;
   totalCommissionEarned: number;
   pendingPayments: number;
+  totalVehicles?: number;
+  activeRentals?: number;
 }
 
 export interface DriverStatusItem {

@@ -24,17 +24,17 @@ router.get("/", async (req, res) => {
   };
 
   const params: unknown[] = [orgId];
-  const conditions = ["organization_id = $1", "(is_deleted = false OR is_deleted IS NULL)"];
+  const conditions = ["d.organization_id = $1", "(d.is_deleted = false OR d.is_deleted IS NULL)"];
 
   if (status) {
     params.push(status);
-    conditions.push(`employment_status = $${params.length}`);
+    conditions.push(`d.employment_status = $${params.length}`);
   }
 
   if (search) {
     params.push(`%${search}%`);
     const idx = params.length;
-    conditions.push(`(LOWER(first_name) LIKE LOWER($${idx}) OR LOWER(last_name) LIKE LOWER($${idx}))`);
+    conditions.push(`(LOWER(d.first_name) LIKE LOWER($${idx}) OR LOWER(d.last_name) LIKE LOWER($${idx}))`);
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -47,10 +47,14 @@ router.get("/", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT id, first_name, last_name, phone, email, employment_status, commission_rate, profile_photo_url, uber_driver_id, bolt_driver_id, glovo_courier_id, bolt_courier_id, wolt_courier_id
-      FROM drivers
+      SELECT d.id, d.first_name, d.last_name, d.phone, d.email, d.employment_status, d.commission_rate, d.profile_photo_url,
+             d.uber_driver_id, d.bolt_driver_id, d.glovo_courier_id, d.bolt_courier_id, d.wolt_courier_id,
+             d.current_vehicle_id,
+             v.license_plate AS current_vehicle_license_plate, v.make AS current_vehicle_make, v.model AS current_vehicle_model
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.current_vehicle_id = v.id
       ${where}
-      ORDER BY created_at DESC
+      ORDER BY d.created_at DESC
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       params,
@@ -172,7 +176,8 @@ router.get("/:id", async (req, res) => {
              v.make AS current_vehicle_make,
              v.model AS current_vehicle_model,
              v.license_plate AS current_vehicle_license_plate,
-             v.year AS current_vehicle_year
+             v.year AS current_vehicle_year,
+             v.status AS current_vehicle_status
       FROM drivers d
       LEFT JOIN vehicles v ON d.current_vehicle_id = v.id
       WHERE d.id = $1 AND d.organization_id = $2 AND (d.is_deleted = false OR d.is_deleted IS NULL)
@@ -186,7 +191,17 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ message: "Driver not found" });
     }
 
-    return res.json(driver);
+    const payload = { ...driver };
+    if (driver.current_vehicle_id) {
+      payload.vehicle = {
+        id: driver.current_vehicle_id,
+        license_plate: driver.current_vehicle_license_plate ?? "",
+        make: driver.current_vehicle_make ?? "",
+        model: driver.current_vehicle_model ?? "",
+        status: driver.current_vehicle_status ?? "available",
+      };
+    }
+    return res.json(payload);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("Get driver error", err);

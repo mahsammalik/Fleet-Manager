@@ -65,6 +65,7 @@ export function DriversListPage() {
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Phone</th>
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Commission</th>
+                  <th className="px-3 py-2 text-left font-medium text-slate-700">Vehicle</th>
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Uber/Bolt</th>
                   <th className="px-3 py-2 text-left font-medium text-slate-700">Actions</th>
                 </tr>
@@ -93,6 +94,20 @@ export function DriversListPage() {
                     <td className="px-3 py-2">{driver.phone}</td>
                     <td className="px-3 py-2 capitalize">{driver.employment_status}</td>
                     <td className="px-3 py-2">{driver.commission_rate}%</td>
+                    <td className="px-3 py-2 text-slate-600">
+                      {driver.current_vehicle_id ? (
+                        <Link
+                          to={`/vehicles/${driver.current_vehicle_id}`}
+                          className="text-sky-600 hover:text-sky-800 text-sm"
+                        >
+                          {driver.current_vehicle_make || driver.current_vehicle_model
+                            ? `${driver.current_vehicle_make ?? ""} ${driver.current_vehicle_model ?? ""}`.trim()
+                            : driver.current_vehicle_license_plate ?? "View vehicle"}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-xs text-slate-600">
                       {PLATFORM_ID_LABELS[PLATFORM_IDS.UBER]}: {driver.uber_driver_id || "-"} ·{" "}
                       {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT]}: {driver.bolt_driver_id || "-"} ·{" "}
@@ -121,7 +136,7 @@ export function DriversListPage() {
                 ))}
                 {data?.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-4 text-center text-sm text-slate-500">
+                    <td colSpan={8} className="px-3 py-4 text-center text-sm text-slate-500">
                       No drivers yet.
                     </td>
                   </tr>

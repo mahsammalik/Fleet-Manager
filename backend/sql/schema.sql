@@ -37,10 +37,9 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Driver profiles
 CREATE TABLE IF NOT EXISTS drivers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    organization_id UUID CONSTRAINT fk_drivers_organization REFERENCES organizations(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
@@ -194,7 +193,7 @@ CREATE INDEX IF NOT EXISTS idx_driver_payments_period ON driver_payments(payment
 -- Vehicles (company-owned, rented to drivers)
 CREATE TABLE IF NOT EXISTS vehicles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    organization_id UUID CONSTRAINT fk_vehicles_organization REFERENCES organizations(id) ON DELETE CASCADE,
     vehicle_type VARCHAR(50) NOT NULL,
     make VARCHAR(100) NOT NULL,
     model VARCHAR(100) NOT NULL,
@@ -212,7 +211,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
     registration_expiry DATE,
     status VARCHAR(50) DEFAULT 'available'
         CHECK (status IN ('available', 'rented', 'maintenance', 'sold', 'scrapped')),
-    current_driver_id UUID REFERENCES drivers(id) ON DELETE SET NULL,
+    current_driver_id UUID CONSTRAINT fk_vehicles_current_driver REFERENCES drivers(id) ON DELETE SET NULL,
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -234,9 +233,9 @@ CREATE INDEX IF NOT EXISTS idx_vehicles_current_driver ON vehicles(current_drive
 -- Vehicle rentals
 CREATE TABLE IF NOT EXISTS vehicle_rentals (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    vehicle_id UUID REFERENCES vehicles(id) ON DELETE CASCADE,
-    driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    vehicle_id UUID CONSTRAINT fk_rentals_vehicle REFERENCES vehicles(id) ON DELETE CASCADE,
+    driver_id UUID CONSTRAINT fk_rentals_driver REFERENCES drivers(id) ON DELETE CASCADE,
+    organization_id UUID CONSTRAINT fk_rentals_organization REFERENCES organizations(id) ON DELETE CASCADE,
     rental_start_date DATE NOT NULL,
     rental_end_date DATE NOT NULL,
     rental_type VARCHAR(50) DEFAULT 'daily'
@@ -256,10 +255,10 @@ CREATE TABLE IF NOT EXISTS vehicle_rentals (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_vehicle ON vehicle_rentals(vehicle_id);
-CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_driver ON vehicle_rentals(driver_id);
+CREATE INDEX IF NOT EXISTS idx_rentals_vehicle ON vehicle_rentals(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_rentals_driver ON vehicle_rentals(driver_id);
 CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_organization ON vehicle_rentals(organization_id);
-CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_status ON vehicle_rentals(status);
+CREATE INDEX IF NOT EXISTS idx_rentals_status ON vehicle_rentals(status);
 CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_period ON vehicle_rentals(rental_start_date, rental_end_date);
 
 -- Vehicle maintenance

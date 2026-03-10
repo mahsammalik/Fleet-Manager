@@ -13,7 +13,19 @@ export interface DriverListItem {
   bolt_driver_id: string | null;
   glovo_courier_id?: string | null;
   bolt_courier_id?: string | null;
-   wolt_courier_id?: string | null;
+  wolt_courier_id?: string | null;
+  current_vehicle_id?: string | null;
+  current_vehicle_make?: string | null;
+  current_vehicle_model?: string | null;
+  current_vehicle_license_plate?: string | null;
+  current_vehicle_year?: number | null;
+  vehicle?: {
+    id: string;
+    license_plate: string;
+    make: string;
+    model: string;
+    status: string;
+  };
 }
 
 export type CommissionType = "percentage" | "fixed_amount" | "hybrid";
@@ -39,6 +51,13 @@ export interface Driver extends DriverListItem {
   current_vehicle_model?: string | null;
   current_vehicle_license_plate?: string | null;
   current_vehicle_year?: number | null;
+  vehicle?: {
+    id: string;
+    license_plate: string;
+    make: string;
+    model: string;
+    status: string;
+  };
   profile_photo_url?: string | null;
   profile_photo_updated_at?: string | null;
   wolt_courier_id?: string | null;
