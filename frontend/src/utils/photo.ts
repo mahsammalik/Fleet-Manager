@@ -3,7 +3,7 @@
  * Backend serves uploads at GET /uploads/...
  */
 function getUploadsBaseUrl(): string {
-  const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:4100/api";
+  const apiUrl = import.meta.env.VITE_API_URL ?? "http://103.131.215.13:4100/api";
   return apiUrl.replace(/\/api\/?$/, "");
 }
 
