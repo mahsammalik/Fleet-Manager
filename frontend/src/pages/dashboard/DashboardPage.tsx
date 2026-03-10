@@ -87,6 +87,19 @@ function CurrencyIcon() {
   );
 }
 
+function VehicleIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M3 13l2-5.5A2 2 0 017 6h10a2 2 0 011.87 1.3L21 13m-2 0h-2M5 13H3m2 0v4m12-4v4M7 17h2m6 0h2M7 17a2 2 0 01-2-2v-2m12 4a2 2 0 002-2v-2M7 17h6"
+      />
+    </svg>
+  );
+}
+
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -153,17 +166,21 @@ export function DashboardPage() {
           <section className="mb-8">
             <h2 className="text-sm font-semibold text-slate-700 mb-4">Overview</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-              <AnalyticsCard
-                title="Total drivers"
-                value={stats.totalDrivers}
-                icon={<UsersIcon />}
-              />
-              <AnalyticsCard
-                title="Active drivers"
-                value={stats.activeDrivers}
-                trend={{ value: "vs last month", positive: true }}
-                icon={<UsersIcon />}
-              />
+              <Link to="/drivers" className="block rounded-xl hover:shadow-lg transition-shadow">
+                <AnalyticsCard
+                  title="Total drivers"
+                  value={stats.totalDrivers}
+                  icon={<UsersIcon />}
+                />
+              </Link>
+              <Link to="/drivers" className="block rounded-xl hover:shadow-lg transition-shadow">
+                <AnalyticsCard
+                  title="Active drivers"
+                  value={stats.activeDrivers}
+                  trend={{ value: "vs last month", positive: true }}
+                  icon={<UsersIcon />}
+                />
+              </Link>
               <AnalyticsCard
                 title="Pending documents"
                 value={stats.pendingDocuments}
@@ -175,6 +192,20 @@ export function DashboardPage() {
                 trend={{ value: "needs attention", positive: false }}
                 icon={<DocumentIcon />}
               />
+              <Link to="/vehicles" className="block rounded-xl hover:shadow-lg transition-shadow">
+                <AnalyticsCard
+                  title="Total vehicles"
+                  value={stats.totalVehicles ?? 0}
+                  icon={<VehicleIcon />}
+                />
+              </Link>
+              <Link to="/vehicles" className="block rounded-xl hover:shadow-lg transition-shadow">
+                <AnalyticsCard
+                  title="Active rentals"
+                  value={stats.activeRentals ?? 0}
+                  icon={<VehicleIcon />}
+                />
+              </Link>
               <AnalyticsCard
                 title="Commission earned"
                 value={formatCurrency(stats.totalCommissionEarned ?? 0)}

@@ -238,7 +238,11 @@ export function VehicleDetailPage() {
                 <div><dt className="text-slate-500">VIN</dt><dd>{v.vin ?? "—"}</dd></div>
                 <div><dt className="text-slate-500">Fuel / Transmission</dt><dd>{[v.fuel_type, v.transmission].filter(Boolean).join(" · ") || "—"}</dd></div>
                 <div><dt className="text-slate-500">Seating capacity</dt><dd>{v.seating_capacity ?? "—"}</dd></div>
-                <div><dt className="text-slate-500">Current driver</dt><dd>{v.driver_first_name || v.driver_last_name ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim() : "—"}</dd></div>
+                <div><dt className="text-slate-500">Current driver</dt><dd>{v.current_driver_id ? (
+                  <Link to={`/drivers/${v.current_driver_id}`} className="text-sky-600 hover:underline">
+                    {v.driver_first_name || v.driver_last_name ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim() : "View driver"}
+                  </Link>
+                ) : (v.driver_first_name || v.driver_last_name ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim() : "—")}</dd></div>
               </dl>
             </section>
 

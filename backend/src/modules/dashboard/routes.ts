@@ -14,7 +14,16 @@ router.get("/stats", async (req, res) => {
   }
 
   try {
-    const [driversRes, activeRes, pendingDocsRes, expiredDocsRes] = await Promise.all([
+    const [
+      driversRes,
+      activeRes,
+      pendingDocsRes,
+      expiredDocsRes,
+      vehiclesRes,
+      activeRentalsRes,
+      totalCommissionRes,
+      pendingPaymentsRes,
+    ] = await Promise.all([
       query<{ count: string }>("SELECT COUNT(*) as count FROM drivers WHERE organization_id = $1", [orgId]),
       query<{ count: string }>(
         "SELECT COUNT(*) as count FROM drivers WHERE organization_id = $1 AND employment_status = 'active'",
@@ -32,20 +41,45 @@ router.get("/stats", async (req, res) => {
          WHERE dr.organization_id = $1 AND d.expiry_date IS NOT NULL AND d.expiry_date < CURRENT_DATE`,
         [orgId],
       ),
+      query<{ count: string }>("SELECT COUNT(*) as count FROM vehicles WHERE organization_id = $1", [orgId]),
+      query<{ count: string }>(
+        `SELECT COUNT(*) as count
+         FROM vehicle_rentals
+         WHERE organization_id = $1 AND status = 'active'`,
+        [orgId],
+      ),
+      query<{ total: string | null }>(
+        `SELECT COALESCE(SUM(company_commission), 0)::text as total
+         FROM driver_payments
+         WHERE organization_id = $1 AND payment_status IN ('paid', 'approved')`,
+        [orgId],
+      ),
+      query<{ total: string | null }>(
+        `SELECT COALESCE(SUM(net_driver_payout), 0)::text as total
+         FROM driver_payments
+         WHERE organization_id = $1 AND payment_status = 'pending'`,
+        [orgId],
+      ),
     ]);
 
     const totalDrivers = parseInt(driversRes.rows[0]?.count ?? "0", 10);
     const activeDrivers = parseInt(activeRes.rows[0]?.count ?? "0", 10);
     const pendingDocuments = parseInt(pendingDocsRes.rows[0]?.count ?? "0", 10);
     const expiredDocuments = parseInt(expiredDocsRes.rows[0]?.count ?? "0", 10);
+    const totalVehicles = parseInt(vehiclesRes.rows[0]?.count ?? "0", 10);
+    const activeRentals = parseInt(activeRentalsRes.rows[0]?.count ?? "0", 10);
+    const totalCommissionEarned = parseFloat(totalCommissionRes.rows[0]?.total ?? "0");
+    const pendingPayments = parseFloat(pendingPaymentsRes.rows[0]?.total ?? "0");
 
     return res.json({
       totalDrivers,
       activeDrivers,
       pendingDocuments,
       expiredDocuments,
-      totalCommissionEarned: 0,
-      pendingPayments: 0,
+      totalVehicles,
+      activeRentals,
+      totalCommissionEarned,
+      pendingPayments,
     });
   } catch (err) {
     // eslint-disable-next-line no-console

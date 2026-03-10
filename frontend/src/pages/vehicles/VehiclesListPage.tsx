@@ -119,9 +119,20 @@ export function VehiclesListPage() {
                       {formatCurrency(Number(v.monthly_rent))}
                     </td>
                     <td className="px-3 py-2 text-slate-600">
-                      {v.driver_first_name || v.driver_last_name
-                        ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim()
-                        : "—"}
+                      {v.current_driver_id ? (
+                        <Link
+                          to={`/drivers/${v.current_driver_id}`}
+                          className="text-sky-600 hover:text-sky-800 text-sm"
+                        >
+                          {v.driver_first_name || v.driver_last_name
+                            ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim()
+                            : "View driver"}
+                        </Link>
+                      ) : (
+                        v.driver_first_name || v.driver_last_name
+                          ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim()
+                          : "—"
+                      )}
                     </td>
                     <td className="px-3 py-2 flex items-center gap-3">
                       <Link
