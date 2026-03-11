@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authenticateJWT, requireRole } from "../../middleware/auth";
-import { query } from "../../db/pool";
+import { pool, query } from "../../db/pool";
 
 const router = Router();
 
@@ -253,6 +253,24 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
     );
     const vehicle = rows[0];
     if (!vehicle) return res.status(404).json({ message: "Vehicle not found" });
+
+    // Keep drivers.current_vehicle_id in sync when currentDriverId is changed via Edit Vehicle page
+    if (typeof currentDriverId !== "undefined") {
+      // Clear any existing driver link to this vehicle in the same organization
+      await query(
+        "UPDATE drivers SET current_vehicle_id = NULL, updated_at = NOW() WHERE current_vehicle_id = $1 AND organization_id = $2",
+        [id, orgId],
+      );
+
+      // If a new currentDriverId is provided (not null), link that driver to this vehicle
+      if (currentDriverId) {
+        await query(
+          "UPDATE drivers SET current_vehicle_id = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3",
+          [id, currentDriverId, orgId],
+        );
+      }
+    }
+
     return res.json(vehicle);
   } catch (err) {
     console.error("Update vehicle error", err);
@@ -334,13 +352,19 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
     });
   }
 
+  const client = await pool.connect();
   try {
+    // Validate vehicle and driver using shared query helper (outside transaction is okay for read-only checks)
     const { rows: vehicleRows } = await query<{ id: string; status: string }>(
       "SELECT id, status FROM vehicles WHERE id = $1 AND organization_id = $2 LIMIT 1",
       [vehicleId, orgId],
     );
-    if (!vehicleRows[0]) return res.status(404).json({ message: "Vehicle not found" });
+    if (!vehicleRows[0]) {
+      client.release();
+      return res.status(404).json({ message: "Vehicle not found" });
+    }
     if (vehicleRows[0].status === "rented") {
+      client.release();
       return res.status(400).json({ message: "Vehicle is already rented" });
     }
 
@@ -348,9 +372,14 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
       "SELECT id FROM drivers WHERE id = $1 AND organization_id = $2 AND (is_deleted = false OR is_deleted IS NULL) LIMIT 1",
       [driverId, orgId],
     );
-    if (!driverRows[0]) return res.status(404).json({ message: "Driver not found" });
+    if (!driverRows[0]) {
+      client.release();
+      return res.status(404).json({ message: "Driver not found" });
+    }
 
-    const { rows } = await query(
+    await client.query("BEGIN");
+
+    const insertResult = await client.query(
       `
       INSERT INTO vehicle_rentals (
         vehicle_id, driver_id, organization_id, rental_start_date, rental_end_date,
@@ -379,18 +408,37 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
       ],
     );
 
-    await query(
-      "UPDATE vehicles SET status = 'rented', current_driver_id = $1, updated_at = NOW() WHERE id = $2",
-      [driverId, vehicleId],
+    const updateVehicleResult = await client.query(
+      "UPDATE vehicles SET status = 'rented', current_driver_id = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3",
+      [driverId, vehicleId, orgId],
     );
+    if (updateVehicleResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      client.release();
+      return res.status(404).json({ message: "Vehicle not found for this organization" });
+    }
 
-    await query(
-      "UPDATE drivers SET current_vehicle_id = $1, updated_at = NOW() WHERE id = $2",
-      [vehicleId, driverId],
+    const updateDriverResult = await client.query(
+      "UPDATE drivers SET current_vehicle_id = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3",
+      [vehicleId, driverId, orgId],
     );
+    if (updateDriverResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      client.release();
+      return res.status(404).json({ message: "Driver not found for this organization" });
+    }
 
-    return res.status(201).json(rows[0]);
+    await client.query("COMMIT");
+    client.release();
+
+    return res.status(201).json(insertResult.rows[0]);
   } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // ignore rollback errors
+    }
+    client.release();
     console.error("Create rental error", err);
     return res.status(500).json({ message: "Internal server error" });
   }

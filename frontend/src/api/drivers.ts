@@ -97,6 +97,10 @@ export interface GetDriversParams {
   offset?: number;
 }
 
+export interface GetDriverByIdParams {
+  include_vehicle?: boolean;
+}
+
 export function createDriver(data: CreateDriverPayload) {
   return api.post<Driver>("/drivers", data);
 }
@@ -105,8 +109,13 @@ export function getDrivers(params?: GetDriversParams) {
   return api.get<DriverListItem[]>("/drivers", { params });
 }
 
-export function getDriverById(id: string) {
-  return api.get<Driver>(`/drivers/${id}`);
+export function getDriverById(id: string, params?: GetDriverByIdParams) {
+  return api.get<Driver>(`/drivers/${id}`, { params });
+}
+
+/** Fetches driver with vehicle data included (for detail page). */
+export function getDriverWithVehicle(id: string) {
+  return getDriverById(id, { include_vehicle: true });
 }
 
 export function updateDriver(id: string, data: Partial<CreateDriverPayload>) {
