@@ -69,6 +69,11 @@ export interface VehicleRental {
   rental_type: RentalType;
   total_rent_amount: string | null;
   deposit_amount: string;
+  deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
+  deposit_paid_at: string | null;
+  deposit_refunded_at: string | null;
+  deposit_deduction_amount: string | null;
+  deposit_deduction_reason: string | null;
   payment_status: PaymentStatus;
   payment_date: string | null;
   payment_method: string | null;
@@ -103,6 +108,11 @@ export interface UpdateRentalPayload {
   paymentDate?: string;
   paymentMethod?: string;
   paymentReference?: string;
+  depositStatus?: "pending" | "paid" | "refunded" | "partial";
+  depositPaidAt?: string;
+  depositRefundedAt?: string;
+  depositDeductionAmount?: number;
+  depositDeductionReason?: string;
 }
 
 export interface VehicleMaintenance {
@@ -178,6 +188,43 @@ export function createVehicleRental(vehicleId: string, data: CreateRentalPayload
 
 export function updateVehicleRental(vehicleId: string, rentalId: string, data: UpdateRentalPayload) {
   return api.patch<VehicleRental>(`/vehicles/${vehicleId}/rentals/${rentalId}`, data);
+}
+
+export function markDepositPaid(
+  vehicleId: string,
+  rentalId: string,
+  data: { paymentMethod?: string; paymentReference?: string } = {},
+) {
+  return updateVehicleRental(vehicleId, rentalId, {
+    depositStatus: "paid",
+    paymentMethod: data.paymentMethod,
+    paymentReference: data.paymentReference,
+  });
+}
+
+export function refundDeposit(
+  vehicleId: string,
+  rentalId: string,
+  data: { paymentMethod?: string; paymentReference?: string } = {},
+) {
+  return updateVehicleRental(vehicleId, rentalId, {
+    depositStatus: "refunded",
+    paymentMethod: data.paymentMethod,
+    paymentReference: data.paymentReference,
+  });
+}
+
+export function deductFromDeposit(
+  vehicleId: string,
+  rentalId: string,
+  data: { amount: number; reason: string; paymentMethod?: string } ,
+) {
+  return updateVehicleRental(vehicleId, rentalId, {
+    depositStatus: "partial",
+    depositDeductionAmount: data.amount,
+    depositDeductionReason: data.reason,
+    paymentMethod: data.paymentMethod,
+  });
 }
 
 export function getVehicleMaintenance(vehicleId: string) {

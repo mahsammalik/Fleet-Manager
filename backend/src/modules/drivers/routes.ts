@@ -79,7 +79,14 @@ router.get("/:id/active-rental", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT r.id AS rental_id, r.vehicle_id, r.rental_start_date, r.rental_end_date, r.status
+      SELECT
+        r.id AS rental_id,
+        r.vehicle_id,
+        r.rental_start_date,
+        r.rental_end_date,
+        r.status,
+        r.deposit_amount,
+        r.deposit_status
       FROM vehicle_rentals r
       WHERE r.driver_id = $1 AND r.organization_id = $2 AND r.status = 'active'
       ORDER BY r.rental_start_date DESC
