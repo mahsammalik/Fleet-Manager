@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS vehicle_rentals (
         CHECK (rental_type IN ('daily', 'weekly', 'monthly')),
     total_rent_amount DECIMAL(10, 2),
     deposit_amount DECIMAL(10, 2) DEFAULT 0.00,
+    deposit_status VARCHAR(50) DEFAULT 'pending'
+        CHECK (deposit_status IN ('pending', 'paid', 'refunded', 'partial')),
+    deposit_paid_at TIMESTAMP,
+    deposit_refunded_at TIMESTAMP,
+    deposit_deduction_amount DECIMAL(10, 2) DEFAULT 0.00,
+    deposit_deduction_reason TEXT,
     payment_status VARCHAR(50) DEFAULT 'pending'
         CHECK (payment_status IN ('pending', 'paid', 'partial', 'overdue')),
     payment_date DATE,
@@ -71,6 +77,23 @@ CREATE TABLE IF NOT EXISTS vehicle_rentals (
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Deposit transactions for rentals
+CREATE TABLE IF NOT EXISTS deposit_transactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    rental_id UUID REFERENCES vehicle_rentals(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    transaction_type VARCHAR(50) NOT NULL
+        CHECK (transaction_type IN ('payment', 'refund', 'deduction')),
+    amount DECIMAL(10, 2) NOT NULL,
+    payment_method VARCHAR(50) DEFAULT 'cash',
+    payment_status VARCHAR(50) DEFAULT 'completed'
+        CHECK (payment_status IN ('pending', 'completed', 'failed')),
+    transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Vehicle Maintenance Table
@@ -100,3 +123,6 @@ CREATE INDEX IF NOT EXISTS idx_rentals_driver ON vehicle_rentals(driver_id);
 CREATE INDEX IF NOT EXISTS idx_rentals_status ON vehicle_rentals(status);
 CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_period ON vehicle_rentals(rental_start_date, rental_end_date);
 CREATE INDEX IF NOT EXISTS idx_vehicle_maintenance_vehicle ON vehicle_maintenance(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_deposit_transactions_rental ON deposit_transactions(rental_id);
+CREATE INDEX IF NOT EXISTS idx_deposit_transactions_status ON deposit_transactions(payment_status);
+CREATE INDEX IF NOT EXISTS idx_deposit_transactions_date ON deposit_transactions(transaction_date);

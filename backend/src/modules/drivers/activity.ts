@@ -8,7 +8,11 @@ export type ActivityType =
   | "document_verify"
   | "document_delete"
   | "driver_delete"
-  | "notes_update";
+  | "notes_update"
+  | "deposit_due"
+  | "deposit_paid"
+  | "deposit_refunded"
+  | "deposit_deducted";
 
 export async function logDriverActivity(
   driverId: string,

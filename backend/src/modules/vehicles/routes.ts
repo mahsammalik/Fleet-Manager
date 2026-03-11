@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticateJWT, requireRole } from "../../middleware/auth";
 import { pool, query } from "../../db/pool";
+import { logDriverActivity } from "../drivers/activity";
 
 const router = Router();
 
@@ -355,8 +356,8 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
   const client = await pool.connect();
   try {
     // Validate vehicle and driver using shared query helper (outside transaction is okay for read-only checks)
-    const { rows: vehicleRows } = await query<{ id: string; status: string }>(
-      "SELECT id, status FROM vehicles WHERE id = $1 AND organization_id = $2 LIMIT 1",
+    const { rows: vehicleRows } = await query<{ id: string; status: string; daily_rent: string; weekly_rent: string; monthly_rent: string }>(
+      "SELECT id, status, daily_rent, weekly_rent, monthly_rent FROM vehicles WHERE id = $1 AND organization_id = $2 LIMIT 1",
       [vehicleId, orgId],
     );
     if (!vehicleRows[0]) {
@@ -377,16 +378,48 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
       return res.status(404).json({ message: "Driver not found" });
     }
 
+    // Resolve deposit amount: prefer explicit value from payload, otherwise default to 1x selected rental rate
+    const vehicle = vehicleRows[0];
+    let resolvedDepositAmount: number;
+    if (typeof depositAmount === "number") {
+      resolvedDepositAmount = Number.isFinite(depositAmount) ? Number(depositAmount) : 0;
+    } else {
+      const type = (rentalType as string | undefined) ?? "daily";
+      if (type === "weekly") {
+        resolvedDepositAmount = Number(vehicle.weekly_rent ?? 0);
+      } else if (type === "monthly") {
+        resolvedDepositAmount = Number(vehicle.monthly_rent ?? 0);
+      } else {
+        resolvedDepositAmount = Number(vehicle.daily_rent ?? 0);
+      }
+    }
+    if (!Number.isFinite(resolvedDepositAmount) || resolvedDepositAmount < 0) {
+      resolvedDepositAmount = 0;
+    }
+
+    const initialDepositStatus = resolvedDepositAmount > 0 ? "pending" : null;
+
     await client.query("BEGIN");
 
     const insertResult = await client.query(
       `
       INSERT INTO vehicle_rentals (
         vehicle_id, driver_id, organization_id, rental_start_date, rental_end_date,
-        rental_type, total_rent_amount, deposit_amount, payment_status, payment_date,
-        payment_method, payment_reference, status, notes, created_by
+        rental_type, total_rent_amount,
+        deposit_amount, deposit_status, deposit_paid_at, deposit_refunded_at, deposit_deduction_amount, deposit_deduction_reason,
+        payment_status, payment_date, payment_method, payment_reference,
+        status, notes, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'daily'), $7, $8, COALESCE($9, 'pending'), $10, $11, $12, COALESCE($13, 'active'), $14, $15)
+      VALUES (
+        $1, $2, $3, $4, $5,
+        COALESCE($6, 'daily'),
+        $7,
+        $8, $9, $10, $11, $12, $13,
+        COALESCE($14, 'pending'), $15, $16, $17,
+        COALESCE($18, 'active'),
+        $19,
+        $20
+      )
       RETURNING *
       `,
       [
@@ -397,7 +430,12 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
         rentalEndDate,
         rentalType ?? null,
         totalRentAmount ?? null,
-        depositAmount ?? 0,
+        resolvedDepositAmount,
+        initialDepositStatus,
+        null,
+        null,
+        0,
+        null,
         paymentStatus ?? null,
         paymentDate ?? null,
         paymentMethod ?? null,
@@ -428,6 +466,20 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
       return res.status(404).json({ message: "Driver not found for this organization" });
     }
 
+    // Log deposit due activity for the driver when a deposit is required
+    const createdRental = insertResult.rows[0] as { id: string };
+    if (resolvedDepositAmount > 0) {
+      await logDriverActivity(String(driverId), "deposit_due", {
+        description: `Deposit of RON ${resolvedDepositAmount.toFixed(2)} due for vehicle rental`,
+        performedBy: userId ?? undefined,
+        newValues: {
+          rental_id: createdRental.id,
+          vehicle_id: vehicleId,
+          deposit_amount: resolvedDepositAmount,
+        },
+      });
+    }
+
     await client.query("COMMIT");
     client.release();
 
@@ -447,15 +499,217 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
 // --- Update rental (e.g. complete, payment)
 router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant"), async (req, res) => {
   const orgId = req.user?.orgId;
+  const userId = req.user?.sub;
   const { vehicleId, rentalId } = req.params;
   const body = req.body as Record<string, unknown>;
-  const { status, paymentStatus, paymentDate, paymentMethod, paymentReference } = body;
+  const {
+    status,
+    paymentStatus,
+    paymentDate,
+    paymentMethod,
+    paymentReference,
+    depositStatus,
+    depositPaidAt,
+    depositRefundedAt,
+    depositDeductionAmount,
+    depositDeductionReason,
+  } = body as {
+    status?: string;
+    paymentStatus?: string;
+    paymentDate?: string;
+    paymentMethod?: string;
+    paymentReference?: string;
+    depositStatus?: "pending" | "paid" | "refunded" | "partial";
+    depositPaidAt?: string;
+    depositRefundedAt?: string;
+    depositDeductionAmount?: number;
+    depositDeductionReason?: string;
+  };
 
   if (!orgId) {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
 
   try {
+    // Load current rental for validation and deposit workflow
+    const { rows: existingRows } = await query<{
+      id: string;
+      driver_id: string;
+      deposit_amount: string;
+      deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
+      deposit_paid_at: string | null;
+      deposit_refunded_at: string | null;
+      deposit_deduction_amount: string | null;
+      deposit_deduction_reason: string | null;
+    }>(
+      `
+      SELECT
+        id,
+        driver_id,
+        deposit_amount,
+        deposit_status,
+        deposit_paid_at,
+        deposit_refunded_at,
+        deposit_deduction_amount,
+        deposit_deduction_reason
+      FROM vehicle_rentals
+      WHERE id = $1 AND vehicle_id = $2 AND organization_id = $3
+      LIMIT 1
+      `,
+      [rentalId, vehicleId, orgId],
+    );
+
+    const current = existingRows[0];
+    if (!current) {
+      return res.status(404).json({ message: "Rental not found" });
+    }
+
+    const currentDepositAmount = Number(current.deposit_amount ?? 0) || 0;
+    const currentDeductionAmount = Number(current.deposit_deduction_amount ?? 0) || 0;
+
+    let nextDepositStatus: "pending" | "paid" | "refunded" | "partial" | null | undefined = depositStatus;
+    let nextDepositPaidAt: string | null | undefined = depositPaidAt ?? null;
+    let nextDepositRefundedAt: string | null | undefined = depositRefundedAt ?? null;
+    let nextDepositDeductionAmount: number | null | undefined =
+      typeof depositDeductionAmount === "number" ? depositDeductionAmount : null;
+    let nextDepositDeductionReason: string | null | undefined =
+      typeof depositDeductionReason === "string" ? depositDeductionReason : null;
+
+    // Apply simple business rules for deposit transitions
+    if (depositStatus === "paid") {
+      if (currentDepositAmount <= 0) {
+        return res.status(400).json({ message: "Cannot mark deposit as paid when deposit amount is zero" });
+      }
+      if (!nextDepositPaidAt) {
+        nextDepositPaidAt = new Date().toISOString();
+      }
+      // Keep refunded_at/deduction as-is when just marking paid
+      nextDepositRefundedAt = current.deposit_refunded_at;
+      nextDepositDeductionAmount = Number.isFinite(currentDeductionAmount) ? currentDeductionAmount : 0;
+      nextDepositDeductionReason = current.deposit_deduction_reason;
+
+      // Log driver activity and deposit transaction
+      await query(
+        `
+        INSERT INTO deposit_transactions (
+          rental_id, organization_id, transaction_type, amount, payment_method, payment_status, notes, created_by
+        )
+        VALUES ($1, $2, 'payment', $3, COALESCE($4, 'cash'), 'completed', $5, $6)
+        `,
+        [
+          rentalId,
+          orgId,
+          currentDepositAmount,
+          paymentMethod ?? null,
+          paymentReference ?? null,
+          userId ?? null,
+        ],
+      );
+
+      await logDriverActivity(current.driver_id, "deposit_paid", {
+        description: `Deposit of RON ${currentDepositAmount.toFixed(2)} marked as paid`,
+        performedBy: userId ?? undefined,
+        newValues: {
+          rental_id: rentalId,
+          vehicle_id: vehicleId,
+          deposit_amount: currentDepositAmount,
+        },
+      });
+    }
+
+    if (depositStatus === "partial") {
+      const requestedDeduction = typeof depositDeductionAmount === "number" ? depositDeductionAmount : 0;
+      if (requestedDeduction <= 0) {
+        return res.status(400).json({ message: "Deduction amount must be greater than zero" });
+      }
+      if (requestedDeduction > currentDepositAmount) {
+        return res.status(400).json({ message: "Deduction amount cannot exceed deposit amount" });
+      }
+      if (!depositDeductionReason || typeof depositDeductionReason !== "string") {
+        return res.status(400).json({ message: "Deduction reason is required for partial refunds" });
+      }
+
+      const finalDeduction = requestedDeduction;
+      nextDepositDeductionAmount = finalDeduction;
+      nextDepositDeductionReason = depositDeductionReason;
+      if (!nextDepositRefundedAt) {
+        nextDepositRefundedAt = new Date().toISOString();
+      }
+
+      await query(
+        `
+        INSERT INTO deposit_transactions (
+          rental_id, organization_id, transaction_type, amount, payment_method, payment_status, notes, created_by
+        )
+        VALUES ($1, $2, 'deduction', $3, COALESCE($4, 'cash'), 'completed', $5, $6)
+        `,
+        [
+          rentalId,
+          orgId,
+          finalDeduction,
+          paymentMethod ?? null,
+          depositDeductionReason,
+          userId ?? null,
+        ],
+      );
+
+      await logDriverActivity(current.driver_id, "deposit_deducted", {
+        description: `RON ${finalDeduction.toFixed(2)} deducted from deposit`,
+        performedBy: userId ?? undefined,
+        newValues: {
+          rental_id: rentalId,
+          vehicle_id: vehicleId,
+          deduction_amount: finalDeduction,
+          deduction_reason: depositDeductionReason,
+        },
+      });
+    }
+
+    if (depositStatus === "refunded") {
+      if (currentDepositAmount <= 0) {
+        return res.status(400).json({ message: "No deposit to refund" });
+      }
+      const effectiveDeduction =
+        typeof nextDepositDeductionAmount === "number"
+          ? nextDepositDeductionAmount
+          : Number(current.deposit_deduction_amount ?? 0) || 0;
+      const refundable = Math.max(0, currentDepositAmount - effectiveDeduction);
+      if (!nextDepositRefundedAt) {
+        nextDepositRefundedAt = new Date().toISOString();
+      }
+
+      if (refundable > 0) {
+        await query(
+          `
+          INSERT INTO deposit_transactions (
+            rental_id, organization_id, transaction_type, amount, payment_method, payment_status, notes, created_by
+          )
+          VALUES ($1, $2, 'refund', $3, COALESCE($4, 'cash'), 'completed', $5, $6)
+          `,
+          [
+            rentalId,
+            orgId,
+            refundable,
+            paymentMethod ?? null,
+            paymentReference ?? null,
+            userId ?? null,
+          ],
+        );
+      }
+
+      await logDriverActivity(current.driver_id, "deposit_refunded", {
+        description: refundable > 0 ? `Deposit refunded: RON ${refundable.toFixed(2)}` : "Deposit fully retained",
+        performedBy: userId ?? undefined,
+        newValues: {
+          rental_id: rentalId,
+          vehicle_id: vehicleId,
+          refunded_amount: refundable,
+          total_deposit: currentDepositAmount,
+          deduction_amount: effectiveDeduction,
+        },
+      });
+    }
+
     const { rows } = await query(
       `
       UPDATE vehicle_rentals
@@ -465,11 +719,30 @@ router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant")
         payment_date = COALESCE($3, payment_date),
         payment_method = COALESCE($4, payment_method),
         payment_reference = COALESCE($5, payment_reference),
+        deposit_status = COALESCE($6, deposit_status),
+        deposit_paid_at = COALESCE($7, deposit_paid_at),
+        deposit_refunded_at = COALESCE($8, deposit_refunded_at),
+        deposit_deduction_amount = COALESCE($9, deposit_deduction_amount),
+        deposit_deduction_reason = COALESCE($10, deposit_deduction_reason),
         updated_at = NOW()
-      WHERE id = $6 AND vehicle_id = $7 AND organization_id = $8
+      WHERE id = $11 AND vehicle_id = $12 AND organization_id = $13
       RETURNING *
       `,
-      [status ?? null, paymentStatus ?? null, paymentDate ?? null, paymentMethod ?? null, paymentReference ?? null, rentalId, vehicleId, orgId],
+      [
+        status ?? null,
+        paymentStatus ?? null,
+        paymentDate ?? null,
+        paymentMethod ?? null,
+        paymentReference ?? null,
+        nextDepositStatus ?? null,
+        nextDepositPaidAt,
+        nextDepositRefundedAt,
+        nextDepositDeductionAmount ?? null,
+        nextDepositDeductionReason ?? null,
+        rentalId,
+        vehicleId,
+        orgId,
+      ],
     );
     const rental = rows[0];
     if (!rental) return res.status(404).json({ message: "Rental not found" });

@@ -35,6 +35,8 @@ export interface DriverActiveRental {
   rental_start_date: string;
   rental_end_date: string;
   status: string;
+  deposit_amount: string;
+  deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
 }
 
 export function getDriverActiveRental(driverId: string) {

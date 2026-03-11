@@ -336,6 +336,11 @@ export function DriverDetailPage() {
                     {d.current_vehicle_make ?? ""} {d.current_vehicle_model ?? ""}
                     {d.current_vehicle_license_plate ? ` (${d.current_vehicle_license_plate})` : ""}
                   </Link>
+                  {activeRental && activeRental.deposit_amount && Number(activeRental.deposit_amount) > 0 && (
+                    <span className="text-xs text-slate-500">
+                      · Deposit {activeRental.deposit_status ?? "pending"}
+                    </span>
+                  )}
                   {canEdit && activeRental && (
                     <button
                       type="button"

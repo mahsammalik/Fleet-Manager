@@ -55,6 +55,13 @@ const PAYMENT_STATUS_COLORS: Record<string, string> = {
   overdue: "bg-red-100 text-red-800",
 };
 
+const DEPOSIT_STATUS_COLORS: Record<string, string> = {
+  pending: "bg-amber-100 text-amber-800",
+  paid: "bg-green-100 text-green-800",
+  refunded: "bg-slate-100 text-slate-800",
+  partial: "bg-blue-100 text-blue-800",
+};
+
 const MAINTENANCE_STATUS_COLORS: Record<string, string> = {
   pending: "bg-amber-100 text-amber-800",
   in_progress: "bg-blue-100 text-blue-800",
@@ -70,6 +77,10 @@ export function VehicleDetailPage() {
   const [addRentalOpen, setAddRentalOpen] = useState(false);
   const [addMaintenanceOpen, setAddMaintenanceOpen] = useState(false);
   const [completeRentalId, setCompleteRentalId] = useState<string | null>(null);
+  const [depositAction, setDepositAction] = useState<{
+    type: "pay" | "refund" | "deduct";
+    rental: VehicleRental;
+  } | null>(null);
 
   const { data: vehicleRes, isLoading: loadingVehicle, isError: vehicleError } = useQuery({
     queryKey: ["vehicle", id],
@@ -311,6 +322,8 @@ export function VehicleDetailPage() {
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Period</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Type</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Amount</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-700">Deposit</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-700">Deposit status</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Payment</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
                     {canEdit && <th className="px-3 py-2 text-left font-medium text-slate-700">Actions</th>}
@@ -330,6 +343,28 @@ export function VehicleDetailPage() {
                       <td className="px-3 py-2 capitalize">{r.rental_type}</td>
                       <td className="px-3 py-2">{r.total_rent_amount != null ? formatCurrency(Number(r.total_rent_amount)) : "—"}</td>
                       <td className="px-3 py-2">
+                        {r.deposit_amount ? formatCurrency(Number(r.deposit_amount)) : "—"}
+                        {r.deposit_status === "partial" && r.deposit_deduction_amount && (
+                          <div className="text-xs text-slate-500">
+                            Deducted: {formatCurrency(Number(r.deposit_deduction_amount))}{" "}
+                            {r.deposit_deduction_reason ? `(${r.deposit_deduction_reason})` : ""}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {r.deposit_amount && Number(r.deposit_amount) > 0 ? (
+                          <span
+                            className={`inline-flex rounded px-2 py-0.5 text-xs font-medium capitalize ${
+                              r.deposit_status ? DEPOSIT_STATUS_COLORS[r.deposit_status] ?? "" : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {r.deposit_status ?? "—"}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
                         <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${PAYMENT_STATUS_COLORS[r.payment_status] ?? ""}`}>
                           {r.payment_status}
                         </span>
@@ -341,6 +376,46 @@ export function VehicleDetailPage() {
                       </td>
                       {canEdit && (
                         <td className="px-3 py-2">
+                          {r.deposit_amount && Number(r.deposit_amount) > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-1">
+                              {r.deposit_status === "pending" && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDepositAction({ type: "pay", rental: r })}
+                                  className="text-xs text-sky-600 hover:underline"
+                                >
+                                  Mark deposit paid
+                                </button>
+                              )}
+                              {r.deposit_status === "paid" && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDepositAction({ type: "refund", rental: r })}
+                                    className="text-xs text-sky-600 hover:underline"
+                                  >
+                                    Refund deposit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDepositAction({ type: "deduct", rental: r })}
+                                    className="text-xs text-amber-600 hover:underline"
+                                  >
+                                    Deduct from deposit
+                                  </button>
+                                </>
+                              )}
+                              {r.deposit_status === "partial" && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDepositAction({ type: "refund", rental: r })}
+                                  className="text-xs text-sky-600 hover:underline"
+                                >
+                                  Refund remaining
+                                </button>
+                              )}
+                            </div>
+                          )}
                           {r.status === "active" && (
                             <button
                               type="button"
@@ -356,7 +431,7 @@ export function VehicleDetailPage() {
                   ))}
                   {rentals.length === 0 && (
                     <tr>
-                      <td colSpan={canEdit ? 7 : 6} className="px-3 py-4 text-center text-slate-500">
+                      <td colSpan={canEdit ? 9 : 8} className="px-3 py-4 text-center text-slate-500">
                         No rentals yet.
                       </td>
                     </tr>
@@ -487,6 +562,16 @@ export function VehicleDetailPage() {
           onClose={() => setAddMaintenanceOpen(false)}
           onSubmit={(payload) => createMaintenanceMutation.mutate(payload)}
           isSubmitting={createMaintenanceMutation.isPending}
+        />
+      )}
+
+      {/* Deposit actions modal */}
+      {depositAction && (
+        <DepositModal
+          action={depositAction.type}
+          rental={depositAction.rental}
+          onClose={() => setDepositAction(null)}
+          vehicleId={id}
         />
       )}
     </div>
@@ -628,6 +713,165 @@ function AddRentalModal({
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function DepositModal({
+  action,
+  rental,
+  vehicleId,
+  onClose,
+}: {
+  action: "pay" | "refund" | "deduct";
+  rental: VehicleRental;
+  vehicleId: string | undefined;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [deductionAmount, setDeductionAmount] = useState<number | "">("");
+  const [deductionReason, setDeductionReason] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (!vehicleId) return;
+      if (action === "pay") {
+        return updateVehicleRental(vehicleId, rental.id, {
+          depositStatus: "paid",
+          paymentMethod: paymentMethod || undefined,
+          paymentReference: paymentReference || undefined,
+        });
+      }
+      if (action === "refund") {
+        return updateVehicleRental(vehicleId, rental.id, {
+          depositStatus: "refunded",
+          paymentMethod: paymentMethod || undefined,
+          paymentReference: paymentReference || undefined,
+        });
+      }
+      // deduct
+      const amount =
+        deductionAmount === "" ? 0 : Number(deductionAmount);
+      return updateVehicleRental(vehicleId, rental.id, {
+        depositStatus: "partial",
+        depositDeductionAmount: amount,
+        depositDeductionReason: deductionReason || undefined,
+        paymentMethod: paymentMethod || undefined,
+      });
+    },
+    onSuccess: (response) => {
+      const updated = response?.data;
+      queryClient.invalidateQueries({ queryKey: ["vehicleRentals", vehicleId] });
+      queryClient.invalidateQueries({ queryKey: ["vehicle", vehicleId] });
+      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      if (updated?.driver_id) {
+        queryClient.invalidateQueries({ queryKey: ["driver", updated.driver_id] });
+        queryClient.invalidateQueries({ queryKey: ["driverActiveRental", updated.driver_id] });
+      }
+      onClose();
+    },
+  });
+
+  const title =
+    action === "pay"
+      ? "Mark deposit as paid"
+      : action === "refund"
+        ? "Refund deposit"
+        : "Deduct from deposit";
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    mutation.mutate();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
+        <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+        <p className="text-sm text-slate-600 mt-1">
+          Deposit amount:{" "}
+          {rental.deposit_amount ? formatCurrency(Number(rental.deposit_amount)) : "—"}
+        </p>
+        <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+          {action === "deduct" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Deduction amount (RON)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={rental.deposit_amount ? Number(rental.deposit_amount) : undefined}
+                  step={0.01}
+                  required
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  value={deductionAmount === "" ? "" : deductionAmount}
+                  onChange={(e) =>
+                    setDeductionAmount(e.target.value ? parseFloat(e.target.value) : "")
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Deduction reason
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  value={deductionReason}
+                  onChange={(e) => setDeductionReason(e.target.value)}
+                />
+              </div>
+            </>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Payment method
+            </label>
+            <input
+              type="text"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+              placeholder="e.g. cash, bank transfer"
+            />
+          </div>
+          {action !== "deduct" && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Reference / notes
+              </label>
+              <input
+                type="text"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={paymentReference}
+                onChange={(e) => setPaymentReference(e.target.value)}
+              />
+            </div>
+          )}
+          <div className="flex gap-2 pt-2">
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+            >
+              {mutation.isPending ? "Saving..." : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={mutation.isPending}
               className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               Cancel
