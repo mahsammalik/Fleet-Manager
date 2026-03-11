@@ -1,6 +1,6 @@
 import { api } from "../lib/api";
 import type { Driver } from "./drivers";
-import { getDriverById, deleteDriver } from "./drivers";
+import { getDriverWithVehicle, deleteDriver } from "./drivers";
 
 export interface DriverActivity {
   id: string;
@@ -14,7 +14,7 @@ export interface DriverActivity {
 }
 
 export function getDriverDetail(id: string) {
-  return getDriverById(id);
+  return getDriverWithVehicle(id);
 }
 
 export type { Driver };

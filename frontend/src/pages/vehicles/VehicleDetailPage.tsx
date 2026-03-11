@@ -105,10 +105,15 @@ export function VehicleDetailPage() {
 
   const createRentalMutation = useMutation({
     mutationFn: (payload: CreateRentalPayload) => createVehicleRental(id!, payload),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const rental = response.data;
       queryClient.invalidateQueries({ queryKey: ["vehicleRentals", id] });
       queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
       queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      if (rental?.driver_id) {
+        queryClient.invalidateQueries({ queryKey: ["driver", rental.driver_id] });
+        queryClient.invalidateQueries({ queryKey: ["driverActiveRental", rental.driver_id] });
+      }
       setAddRentalOpen(false);
     },
   });
@@ -116,10 +121,15 @@ export function VehicleDetailPage() {
   const completeRentalMutation = useMutation({
     mutationFn: (rentalId: string) =>
       updateVehicleRental(id!, rentalId, { status: "completed" }),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      const rental = response.data;
       queryClient.invalidateQueries({ queryKey: ["vehicleRentals", id] });
       queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
       queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      if (rental?.driver_id) {
+        queryClient.invalidateQueries({ queryKey: ["driver", rental.driver_id] });
+        queryClient.invalidateQueries({ queryKey: ["driverActiveRental", rental.driver_id] });
+      }
       setCompleteRentalId(null);
     },
   });

@@ -171,15 +171,22 @@ router.get("/:id", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT d.*,
-             v.id AS current_vehicle_id,
+      SELECT d.id, d.organization_id, d.user_id, d.first_name, d.last_name, d.email, d.phone,
+             d.date_of_birth, d.address, d.license_number, d.license_expiry, d.license_class,
+             d.hire_date, d.employment_status, d.commission_rate, d.base_commission_rate,
+             d.commission_type, d.fixed_commission_amount, d.minimum_commission,
+             d.uber_driver_id, d.bolt_driver_id, d.glovo_courier_id, d.bolt_courier_id, d.wolt_courier_id,
+             d.wolt_courier_verified, d.wolt_courier_verified_at, d.notes, d.profile_photo_url,
+             d.profile_photo_updated_at, d.created_at, d.updated_at,
+             d.is_deleted, d.deleted_at, d.deleted_by,
+             d.current_vehicle_id,
              v.make AS current_vehicle_make,
              v.model AS current_vehicle_model,
              v.license_plate AS current_vehicle_license_plate,
              v.year AS current_vehicle_year,
              v.status AS current_vehicle_status
       FROM drivers d
-      LEFT JOIN vehicles v ON d.current_vehicle_id = v.id
+      LEFT JOIN vehicles v ON d.current_vehicle_id = v.id AND v.organization_id = d.organization_id
       WHERE d.id = $1 AND d.organization_id = $2 AND (d.is_deleted = false OR d.is_deleted IS NULL)
       LIMIT 1
       `,
