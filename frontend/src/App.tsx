@@ -14,6 +14,7 @@ import { AddVehiclePage } from "./pages/vehicles/AddVehiclePage";
 import { EditVehiclePage } from "./pages/vehicles/EditVehiclePage";
 import { VehicleDetailPage } from "./pages/vehicles/VehicleDetailPage";
 import { VehicleDocumentsPage } from "./pages/vehicles/VehicleDocumentsPage";
+import { OverdueRentalsPage } from "./pages/rentals/OverdueRentalsPage";
 
 function ProtectedRoute({ children }: { children: React.ReactElement }) {
   const token = useAuthStore((s) => s.token);
@@ -89,6 +90,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <EditVehiclePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/rentals/overdue"
+        element={
+          <ProtectedRoute>
+            <OverdueRentalsPage />
           </ProtectedRoute>
         }
       />

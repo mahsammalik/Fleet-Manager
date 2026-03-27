@@ -206,6 +206,14 @@ export function DashboardPage() {
                   icon={<VehicleIcon />}
                 />
               </Link>
+              <Link to="/rentals/overdue" className="block rounded-xl hover:shadow-lg transition-shadow">
+                <AnalyticsCard
+                  title="Overdue rentals"
+                  value={stats.overdueRentals ?? 0}
+                  trend={{ value: "needs attention", positive: false }}
+                  icon={<VehicleIcon />}
+                />
+              </Link>
               <AnalyticsCard
                 title="Commission earned"
                 value={formatCurrency(stats.totalCommissionEarned ?? 0)}
