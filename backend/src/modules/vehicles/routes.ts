@@ -7,6 +7,150 @@ const router = Router();
 
 router.use(authenticateJWT);
 
+type RentalDepositSnapshot = {
+  id: string;
+  vehicle_id: string;
+  driver_id: string;
+  organization_id: string;
+  rental_start_date: string;
+  rental_type: "daily" | "weekly" | "monthly" | null;
+  completion_date: string;
+  daily_rent: string | null;
+  weekly_rent: string | null;
+  monthly_rent: string | null;
+  deposit_amount: string | null;
+  deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
+  deposit_deduction_amount: string | null;
+  deposit_deduction_reason: string | null;
+};
+
+function daysUsedInclusive(startDate: string, endDate: string): number {
+  const startMs = Date.parse(`${startDate}T00:00:00Z`);
+  const endMs = Date.parse(`${endDate}T00:00:00Z`);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return 1;
+  const diffDays = Math.floor((endMs - startMs) / 86400000) + 1;
+  return Math.max(1, diffDays);
+}
+
+function roundTo2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function normalizeDateInput(input?: string): string | null {
+  if (!input) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return null;
+  const parsed = new Date(`${input}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return input;
+}
+
+function calculateProratedTotalRent(rental: RentalDepositSnapshot): number {
+  const actualDays = daysUsedInclusive(rental.rental_start_date, rental.completion_date);
+  const type = rental.rental_type ?? "daily";
+  const dailyRate = Number(rental.daily_rent ?? 0) || 0;
+  const weeklyRate = Number(rental.weekly_rent ?? 0) || 0;
+  const monthlyRate = Number(rental.monthly_rent ?? 0) || 0;
+
+  if (type === "weekly") return roundTo2((weeklyRate / 7) * actualDays);
+  if (type === "monthly") return roundTo2((monthlyRate / 30) * actualDays);
+  return roundTo2(dailyRate * actualDays);
+}
+
+async function completeRentalWithDepositRefund(
+  rental: RentalDepositSnapshot,
+  userId: string | undefined,
+  options: { deductionAmount?: number; deductionReason?: string; completionDate?: string } = {},
+): Promise<void> {
+  const effectiveCompletionDate = options.completionDate ?? rental.completion_date;
+  const proratedTotalRentAmount = calculateProratedTotalRent({
+    ...rental,
+    completion_date: effectiveCompletionDate,
+  });
+  const depositAmount = Number(rental.deposit_amount ?? 0) || 0;
+  let deductionAmount = Number(rental.deposit_deduction_amount ?? 0) || 0;
+  let deductionReason = rental.deposit_deduction_reason ?? null;
+
+  if (typeof options.deductionAmount === "number") {
+    if (options.deductionAmount < 0 || options.deductionAmount > depositAmount) {
+      throw new Error("Invalid deductionAmount");
+    }
+    deductionAmount = options.deductionAmount;
+    deductionReason = options.deductionReason ?? deductionReason ?? "Overdue rental deduction";
+  }
+
+  const refundableAmount = Math.max(0, depositAmount - deductionAmount);
+  const nowIso = new Date().toISOString();
+
+  if (depositAmount > 0 && typeof options.deductionAmount === "number" && deductionAmount > 0) {
+    await query(
+      `
+      INSERT INTO deposit_transactions (
+        rental_id, organization_id, transaction_type, amount, payment_method, payment_status, notes, created_by
+      )
+      VALUES ($1, $2, 'deduction', $3, 'cash', 'completed', $4, $5)
+      `,
+      [rental.id, rental.organization_id, deductionAmount, deductionReason, userId ?? null],
+    );
+    await logDriverActivity(rental.driver_id, "deposit_deducted", {
+      description: `RON ${deductionAmount.toFixed(2)} deducted on rental completion`,
+      performedBy: userId,
+      newValues: { rental_id: rental.id, deduction_amount: deductionAmount, deduction_reason: deductionReason },
+    });
+  }
+
+  if (depositAmount > 0 && refundableAmount > 0 && (rental.deposit_status === "paid" || rental.deposit_status === "partial")) {
+    await query(
+      `
+      INSERT INTO deposit_transactions (
+        rental_id, organization_id, transaction_type, amount, payment_method, payment_status, notes, created_by
+      )
+      VALUES ($1, $2, 'refund', $3, 'cash', 'completed', $4, $5)
+      `,
+      [rental.id, rental.organization_id, refundableAmount, "Auto refund on rental completion", userId ?? null],
+    );
+    await logDriverActivity(rental.driver_id, "deposit_refunded", {
+      description: `Deposit auto-refunded: RON ${refundableAmount.toFixed(2)}`,
+      performedBy: userId,
+      newValues: { rental_id: rental.id, refunded_amount: refundableAmount },
+    });
+  }
+
+  if (depositAmount > 0) {
+    await query(
+      `
+      UPDATE vehicle_rentals
+      SET
+        deposit_status = CASE WHEN $1 > 0 THEN 'partial' ELSE 'refunded' END,
+        deposit_refunded_at = COALESCE(deposit_refunded_at, $2),
+        deposit_deduction_amount = $1,
+        deposit_deduction_reason = $3,
+        updated_at = NOW()
+      WHERE id = $4 AND organization_id = $5
+      `,
+      [deductionAmount, nowIso, deductionReason, rental.id, rental.organization_id],
+    );
+  }
+
+  await query(
+    `
+    UPDATE vehicle_rentals
+    SET status = 'completed', rental_end_date = $3, total_rent_amount = $4, updated_at = NOW()
+    WHERE id = $1 AND organization_id = $2
+    `,
+    [rental.id, rental.organization_id, effectiveCompletionDate, proratedTotalRentAmount],
+  );
+
+  await query(
+    "UPDATE vehicles SET status = 'available', current_driver_id = NULL, updated_at = NOW() WHERE id = $1 AND organization_id = $2",
+    [rental.vehicle_id, rental.organization_id],
+  );
+
+  await query(
+    "UPDATE drivers SET current_vehicle_id = NULL, updated_at = NOW() WHERE id = $1 AND organization_id = $2",
+    [rental.driver_id, rental.organization_id],
+  );
+}
+
 // --- Vehicles list
 router.get("/", async (req, res) => {
   const orgId = req.user?.orgId;
@@ -49,6 +193,249 @@ router.get("/", async (req, res) => {
     return res.json(rows);
   } catch (err) {
     console.error("List vehicles error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// --- Overdue rentals list
+router.get("/rentals/overdue", requireRole("admin", "accountant"), async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+
+  const {
+    minOverdueDays,
+    maxOverdueDays,
+    vehicleId,
+    driverId,
+    limit,
+    offset,
+  } = req.query as {
+    minOverdueDays?: string;
+    maxOverdueDays?: string;
+    vehicleId?: string;
+    driverId?: string;
+    limit?: string;
+    offset?: string;
+  };
+
+  const params: unknown[] = [orgId];
+  const conditions = [
+    "r.organization_id = $1",
+    "r.status = 'active'",
+    "CURRENT_DATE > r.rental_end_date",
+  ];
+
+  if (vehicleId) {
+    params.push(vehicleId);
+    conditions.push(`r.vehicle_id = $${params.length}`);
+  }
+  if (driverId) {
+    params.push(driverId);
+    conditions.push(`r.driver_id = $${params.length}`);
+  }
+  if (minOverdueDays) {
+    params.push(Math.max(0, Number(minOverdueDays)));
+    conditions.push(`(CURRENT_DATE - r.rental_end_date) >= $${params.length}`);
+  }
+  if (maxOverdueDays) {
+    params.push(Math.max(0, Number(maxOverdueDays)));
+    conditions.push(`(CURRENT_DATE - r.rental_end_date) <= $${params.length}`);
+  }
+
+  const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 200) : 50;
+  const offsetNum = offset ? Math.max(0, parseInt(offset, 10)) : 0;
+  params.push(limitNum, offsetNum);
+  const limitIdx = params.length - 1;
+  const offsetIdx = params.length;
+
+  try {
+    const { rows } = await query(
+      `
+      SELECT
+        r.id AS rental_id,
+        r.vehicle_id,
+        r.driver_id,
+        r.rental_start_date,
+        r.rental_end_date,
+        r.rental_type,
+        r.deposit_amount,
+        r.deposit_status,
+        r.deposit_deduction_amount,
+        r.deposit_deduction_reason,
+        v.make AS vehicle_make,
+        v.model AS vehicle_model,
+        v.license_plate,
+        v.daily_rent,
+        d.first_name AS driver_first_name,
+        d.last_name AS driver_last_name,
+        (CURRENT_DATE - r.rental_end_date) AS overdue_days,
+        ((CURRENT_DATE - r.rental_end_date) * COALESCE(v.daily_rent, 0))::numeric(10,2) AS overdue_amount
+      FROM vehicle_rentals r
+      JOIN vehicles v ON r.vehicle_id = v.id
+      JOIN drivers d ON r.driver_id = d.id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY overdue_days DESC, r.rental_end_date ASC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      `,
+      params,
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.error("List overdue rentals error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// --- Complete overdue rental (auto-refund deposit)
+router.post("/rentals/:rentalId/complete", requireRole("admin", "accountant"), async (req, res) => {
+  const orgId = req.user?.orgId;
+  const userId = req.user?.sub;
+  const { rentalId } = req.params;
+  const {
+    deductionAmount,
+    deductionReason,
+    completionDate,
+  } = req.body as { deductionAmount?: number; deductionReason?: string; completionDate?: string };
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  const resolvedCompletionDate = completionDate ? normalizeDateInput(completionDate) : new Date().toISOString().split("T")[0];
+  if (!resolvedCompletionDate) {
+    return res.status(400).json({ message: "completionDate must be in YYYY-MM-DD format" });
+  }
+  try {
+    const { rows } = await query<RentalDepositSnapshot>(
+      `
+      SELECT
+        r.id,
+        r.vehicle_id,
+        r.driver_id,
+        r.organization_id,
+        r.rental_start_date::text,
+        r.rental_type,
+        $3::text AS completion_date,
+        v.daily_rent::text,
+        v.weekly_rent::text,
+        v.monthly_rent::text,
+        r.deposit_amount::text,
+        r.deposit_status,
+        r.deposit_deduction_amount::text,
+        r.deposit_deduction_reason
+      FROM vehicle_rentals r
+      JOIN vehicles v ON r.vehicle_id = v.id
+      WHERE r.id = $1 AND r.organization_id = $2 AND r.status = 'active'
+      LIMIT 1
+      `,
+      [rentalId, orgId, resolvedCompletionDate],
+    );
+    const rental = rows[0];
+    if (!rental) {
+      return res.status(404).json({ message: "Active rental not found" });
+    }
+    await completeRentalWithDepositRefund(rental, userId, {
+      deductionAmount,
+      deductionReason,
+      completionDate: resolvedCompletionDate,
+    });
+    const { rows: updatedRows } = await query("SELECT * FROM vehicle_rentals WHERE id = $1 LIMIT 1", [rentalId]);
+    return res.json(updatedRows[0]);
+  } catch (err) {
+    console.error("Complete overdue rental error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// --- Extend rental period
+router.post("/rentals/:rentalId/extend", requireRole("admin", "accountant"), async (req, res) => {
+  const orgId = req.user?.orgId;
+  const { rentalId } = req.params;
+  const { newEndDate } = req.body as { newEndDate?: string };
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  if (!newEndDate) {
+    return res.status(400).json({ message: "newEndDate is required" });
+  }
+  try {
+    const { rows } = await query(
+      `
+      UPDATE vehicle_rentals
+      SET rental_end_date = $1, updated_at = NOW()
+      WHERE id = $2 AND organization_id = $3 AND status = 'active'
+      RETURNING *
+      `,
+      [newEndDate, rentalId, orgId],
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ message: "Active rental not found" });
+    }
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error("Extend rental error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// --- Bulk complete overdue rentals
+router.post("/rentals/overdue/bulk-complete", requireRole("admin", "accountant"), async (req, res) => {
+  const orgId = req.user?.orgId;
+  const userId = req.user?.sub;
+  const { rentalIds, completionDate } = req.body as { rentalIds?: string[]; completionDate?: string };
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  if (!Array.isArray(rentalIds) || rentalIds.length === 0) {
+    return res.status(400).json({ message: "rentalIds must be a non-empty array" });
+  }
+  const resolvedCompletionDate = completionDate ? normalizeDateInput(completionDate) : new Date().toISOString().split("T")[0];
+  if (!resolvedCompletionDate) {
+    return res.status(400).json({ message: "completionDate must be in YYYY-MM-DD format" });
+  }
+  try {
+    let completed = 0;
+    const failed: { rentalId: string; message: string }[] = [];
+    for (const rentalId of rentalIds) {
+      try {
+        const { rows } = await query<RentalDepositSnapshot>(
+          `
+          SELECT
+            r.id,
+            r.vehicle_id,
+            r.driver_id,
+            r.organization_id,
+            r.rental_start_date::text,
+            r.rental_type,
+            $3::text AS completion_date,
+            v.daily_rent::text,
+            v.weekly_rent::text,
+            v.monthly_rent::text,
+            r.deposit_amount::text,
+            r.deposit_status,
+            r.deposit_deduction_amount::text,
+            r.deposit_deduction_reason
+          FROM vehicle_rentals r
+          JOIN vehicles v ON r.vehicle_id = v.id
+          WHERE r.id = $1 AND r.organization_id = $2 AND r.status = 'active' AND CURRENT_DATE > r.rental_end_date
+          LIMIT 1
+          `,
+          [rentalId, orgId, resolvedCompletionDate],
+        );
+        const rental = rows[0];
+        if (!rental) {
+          failed.push({ rentalId, message: "Overdue active rental not found" });
+          continue;
+        }
+        await completeRentalWithDepositRefund(rental, userId, { completionDate: resolvedCompletionDate });
+        completed += 1;
+      } catch {
+        failed.push({ rentalId, message: "Failed to complete rental" });
+      }
+    }
+    return res.json({ completed, failed });
+  } catch (err) {
+    console.error("Bulk complete overdue rentals error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });
@@ -378,26 +765,78 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
       return res.status(404).json({ message: "Driver not found" });
     }
 
-    // Resolve deposit amount: prefer explicit value from payload, otherwise default to 1x selected rental rate
+    // Resolve requested deposit amount from payload only.
+    // If not provided (or invalid), rental is treated as "no deposit required".
     const vehicle = vehicleRows[0];
-    let resolvedDepositAmount: number;
-    if (typeof depositAmount === "number") {
-      resolvedDepositAmount = Number.isFinite(depositAmount) ? Number(depositAmount) : 0;
-    } else {
-      const type = (rentalType as string | undefined) ?? "daily";
-      if (type === "weekly") {
-        resolvedDepositAmount = Number(vehicle.weekly_rent ?? 0);
-      } else if (type === "monthly") {
-        resolvedDepositAmount = Number(vehicle.monthly_rent ?? 0);
-      } else {
-        resolvedDepositAmount = Number(vehicle.daily_rent ?? 0);
-      }
+    let resolvedDepositAmount = 0;
+    const hasExplicitDepositAmount = typeof depositAmount === "number";
+    const rentalRateType = (rentalType as string | undefined) ?? "daily";
+    let fallbackRateAmount = Number(vehicle.daily_rent ?? 0) || 0;
+    if (rentalRateType === "weekly") {
+      fallbackRateAmount = Number(vehicle.weekly_rent ?? 0) || 0;
+    } else if (rentalRateType === "monthly") {
+      fallbackRateAmount = Number(vehicle.monthly_rent ?? 0) || 0;
+    }
+
+    if (hasExplicitDepositAmount) {
+      resolvedDepositAmount = Number.isFinite(Number(depositAmount)) ? Number(depositAmount) : 0;
     }
     if (!Number.isFinite(resolvedDepositAmount) || resolvedDepositAmount < 0) {
       resolvedDepositAmount = 0;
     }
+    const noDepositRequested = !hasExplicitDepositAmount || resolvedDepositAmount === 0;
 
-    const initialDepositStatus = resolvedDepositAmount > 0 ? "pending" : null;
+    const { rows: activeRentalRows } = await query<{ id: string }>(
+      `
+      SELECT id
+      FROM vehicle_rentals
+      WHERE driver_id = $1 AND organization_id = $2 AND status = 'active'
+      LIMIT 1
+      `,
+      [driverId, orgId],
+    );
+
+    const { rows: latestCompletedRentalRows } = await query<{
+      id: string;
+      deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
+      deposit_amount: string | null;
+      deposit_deduction_amount: string | null;
+      notes: string | null;
+    }>(
+      `
+      SELECT id, deposit_status, deposit_amount::text, deposit_deduction_amount::text, notes
+      FROM vehicle_rentals
+      WHERE driver_id = $1 AND organization_id = $2 AND status = 'completed'
+      ORDER BY rental_end_date DESC NULLS LAST, created_at DESC
+      LIMIT 1
+      `,
+      [driverId, orgId],
+    );
+
+    const hasActiveRental = Boolean(activeRentalRows[0]);
+    const latestCompletedRental = latestCompletedRentalRows[0];
+    const latestDepositAmount = Number(latestCompletedRental?.deposit_amount ?? 0) || 0;
+    const latestDeductionAmount = Number(latestCompletedRental?.deposit_deduction_amount ?? 0) || 0;
+    const latestRemainingCredit = Math.max(0, latestDepositAmount - latestDeductionAmount);
+    const hasUnrefundedLatestCredit =
+      latestCompletedRental &&
+      (latestCompletedRental.deposit_status === "paid" || latestCompletedRental.deposit_status === "partial") &&
+      latestRemainingCredit > 0;
+    const canConsumeDepositCredit = Boolean(!noDepositRequested && !hasActiveRental && hasUnrefundedLatestCredit);
+
+    const finalDepositAmount = canConsumeDepositCredit ? 0 : resolvedDepositAmount;
+    const initialDepositStatus = finalDepositAmount > 0 ? "pending" : null;
+    const initialDepositPaidAt = null;
+    const creditAuditNote = canConsumeDepositCredit
+      ? `Deposit credit consumed from rental ${latestCompletedRental?.id} (RON ${latestRemainingCredit.toFixed(2)})`
+      : null;
+
+    const resolvedNotes = [
+      typeof notes === "string" ? notes.trim() : "",
+      creditAuditNote ?? "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
 
     await client.query("BEGIN");
 
@@ -430,9 +869,9 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
         rentalEndDate,
         rentalType ?? null,
         totalRentAmount ?? null,
-        resolvedDepositAmount,
+        finalDepositAmount,
         initialDepositStatus,
-        null,
+        initialDepositPaidAt,
         null,
         0,
         null,
@@ -441,10 +880,27 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
         paymentMethod ?? null,
         paymentReference ?? null,
         status ?? null,
-        notes ?? null,
+        resolvedNotes || null,
         userId ?? null,
       ],
     );
+
+    if (canConsumeDepositCredit && latestCompletedRental) {
+      const sourceCreditNote = [
+        latestCompletedRental.notes?.trim() ?? "",
+        `Deposit credit consumed by rental ${(insertResult.rows[0] as { id: string }).id} (RON ${latestRemainingCredit.toFixed(2)})`,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      await client.query(
+        `
+        UPDATE vehicle_rentals
+        SET deposit_status = 'refunded', deposit_refunded_at = COALESCE(deposit_refunded_at, NOW()), notes = $1, updated_at = NOW()
+        WHERE id = $2 AND organization_id = $3
+        `,
+        [sourceCreditNote, latestCompletedRental.id, orgId],
+      );
+    }
 
     const updateVehicleResult = await client.query(
       "UPDATE vehicles SET status = 'rented', current_driver_id = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3",
@@ -466,16 +922,43 @@ router.post("/:id/rentals", requireRole("admin", "accountant"), async (req, res)
       return res.status(404).json({ message: "Driver not found for this organization" });
     }
 
-    // Log deposit due activity for the driver when a deposit is required
+    // Log deposit state for the driver when deposit is required/credit-consumed/no-deposit
     const createdRental = insertResult.rows[0] as { id: string };
-    if (resolvedDepositAmount > 0) {
+    if (canConsumeDepositCredit && latestCompletedRental) {
+      await logDriverActivity(String(driverId), "deposit_credit_consumed", {
+        description: `Deposit credit applied from rental ${latestCompletedRental.id}: RON ${latestRemainingCredit.toFixed(2)}`,
+        performedBy: userId ?? undefined,
+        newValues: {
+          source_rental_id: latestCompletedRental.id,
+          rental_id: createdRental.id,
+          vehicle_id: vehicleId,
+          credit_used_amount: latestRemainingCredit,
+          deposit_amount: 0,
+          deposit_status: null,
+        },
+      });
+    } else if (finalDepositAmount > 0) {
       await logDriverActivity(String(driverId), "deposit_due", {
-        description: `Deposit of RON ${resolvedDepositAmount.toFixed(2)} due for vehicle rental`,
+        description: `Deposit of RON ${finalDepositAmount.toFixed(2)} due for vehicle rental`,
         performedBy: userId ?? undefined,
         newValues: {
           rental_id: createdRental.id,
           vehicle_id: vehicleId,
-          deposit_amount: resolvedDepositAmount,
+          deposit_amount: finalDepositAmount,
+        },
+      });
+    } else {
+      const noDepositReason = noDepositRequested
+        ? "No deposit requested for this rental"
+        : `Deposit credit blocked (active rental exists: ${hasActiveRental}, latestStatus: ${latestCompletedRental?.deposit_status ?? "none"})`;
+      await logDriverActivity(String(driverId), "deposit_not_required", {
+        description: noDepositReason,
+        performedBy: userId ?? undefined,
+        newValues: {
+          rental_id: createdRental.id,
+          vehicle_id: vehicleId,
+          deposit_amount: 0,
+          fallback_rate_amount: fallbackRateAmount,
         },
       });
     }
@@ -504,6 +987,7 @@ router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant")
   const body = req.body as Record<string, unknown>;
   const {
     status,
+    completionDate,
     paymentStatus,
     paymentDate,
     paymentMethod,
@@ -524,17 +1008,29 @@ router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant")
     depositRefundedAt?: string;
     depositDeductionAmount?: number;
     depositDeductionReason?: string;
+    completionDate?: string;
   };
 
   if (!orgId) {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
 
+  const resolvedCompletionDate = completionDate ? normalizeDateInput(completionDate) : new Date().toISOString().split("T")[0];
+  if (!resolvedCompletionDate) {
+    return res.status(400).json({ message: "completionDate must be in YYYY-MM-DD format" });
+  }
+
   try {
     // Load current rental for validation and deposit workflow
     const { rows: existingRows } = await query<{
       id: string;
+      rental_start_date: string;
+      rental_type: "daily" | "weekly" | "monthly" | null;
+      completion_date: string;
       driver_id: string;
+      daily_rent: string | null;
+      weekly_rent: string | null;
+      monthly_rent: string | null;
       deposit_amount: string;
       deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
       deposit_paid_at: string | null;
@@ -544,19 +1040,26 @@ router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant")
     }>(
       `
       SELECT
-        id,
-        driver_id,
-        deposit_amount,
-        deposit_status,
-        deposit_paid_at,
-        deposit_refunded_at,
-        deposit_deduction_amount,
-        deposit_deduction_reason
-      FROM vehicle_rentals
-      WHERE id = $1 AND vehicle_id = $2 AND organization_id = $3
+        r.id,
+        r.rental_start_date::text,
+        r.rental_type,
+        $4::text AS completion_date,
+        r.driver_id,
+        v.daily_rent::text,
+        v.weekly_rent::text,
+        v.monthly_rent::text,
+        r.deposit_amount::text,
+        r.deposit_status,
+        r.deposit_paid_at::text,
+        r.deposit_refunded_at::text,
+        r.deposit_deduction_amount::text,
+        r.deposit_deduction_reason
+      FROM vehicle_rentals r
+      JOIN vehicles v ON r.vehicle_id = v.id
+      WHERE r.id = $1 AND r.vehicle_id = $2 AND r.organization_id = $3
       LIMIT 1
       `,
-      [rentalId, vehicleId, orgId],
+      [rentalId, vehicleId, orgId, resolvedCompletionDate],
     );
 
     const current = existingRows[0];
@@ -574,6 +1077,25 @@ router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant")
       typeof depositDeductionAmount === "number" ? depositDeductionAmount : null;
     let nextDepositDeductionReason: string | null | undefined =
       typeof depositDeductionReason === "string" ? depositDeductionReason : null;
+    const nextTotalRentAmount =
+      status === "completed"
+        ? calculateProratedTotalRent({
+            id: current.id,
+            vehicle_id: String(vehicleId),
+            driver_id: current.driver_id,
+            organization_id: orgId,
+            rental_start_date: current.rental_start_date,
+            rental_type: current.rental_type,
+            completion_date: resolvedCompletionDate,
+            daily_rent: current.daily_rent,
+            weekly_rent: current.weekly_rent,
+            monthly_rent: current.monthly_rent,
+            deposit_amount: current.deposit_amount,
+            deposit_status: current.deposit_status,
+            deposit_deduction_amount: current.deposit_deduction_amount,
+            deposit_deduction_reason: current.deposit_deduction_reason,
+          })
+        : null;
 
     // Apply simple business rules for deposit transitions
     if (depositStatus === "paid") {
@@ -724,8 +1246,10 @@ router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant")
         deposit_refunded_at = COALESCE($8, deposit_refunded_at),
         deposit_deduction_amount = COALESCE($9, deposit_deduction_amount),
         deposit_deduction_reason = COALESCE($10, deposit_deduction_reason),
+        total_rent_amount = COALESCE($11, total_rent_amount),
+        rental_end_date = COALESCE($12, rental_end_date),
         updated_at = NOW()
-      WHERE id = $11 AND vehicle_id = $12 AND organization_id = $13
+      WHERE id = $13 AND vehicle_id = $14 AND organization_id = $15
       RETURNING *
       `,
       [
@@ -739,6 +1263,8 @@ router.patch("/:vehicleId/rentals/:rentalId", requireRole("admin", "accountant")
         nextDepositRefundedAt,
         nextDepositDeductionAmount ?? null,
         nextDepositDeductionReason ?? null,
+        nextTotalRentAmount,
+        status === "completed" ? resolvedCompletionDate : null,
         rentalId,
         vehicleId,
         orgId,

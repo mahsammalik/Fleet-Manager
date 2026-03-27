@@ -21,6 +21,7 @@ router.get("/stats", async (req, res) => {
       expiredDocsRes,
       vehiclesRes,
       activeRentalsRes,
+      overdueRentalsRes,
       totalCommissionRes,
       pendingPaymentsRes,
     ] = await Promise.all([
@@ -48,6 +49,12 @@ router.get("/stats", async (req, res) => {
          WHERE organization_id = $1 AND status = 'active'`,
         [orgId],
       ),
+      query<{ count: string }>(
+        `SELECT COUNT(*) as count
+         FROM vehicle_rentals
+         WHERE organization_id = $1 AND status = 'active' AND CURRENT_DATE > rental_end_date`,
+        [orgId],
+      ),
       query<{ total: string | null }>(
         `SELECT COALESCE(SUM(company_commission), 0)::text as total
          FROM driver_payments
@@ -68,6 +75,7 @@ router.get("/stats", async (req, res) => {
     const expiredDocuments = parseInt(expiredDocsRes.rows[0]?.count ?? "0", 10);
     const totalVehicles = parseInt(vehiclesRes.rows[0]?.count ?? "0", 10);
     const activeRentals = parseInt(activeRentalsRes.rows[0]?.count ?? "0", 10);
+    const overdueRentals = parseInt(overdueRentalsRes.rows[0]?.count ?? "0", 10);
     const totalCommissionEarned = parseFloat(totalCommissionRes.rows[0]?.total ?? "0");
     const pendingPayments = parseFloat(pendingPaymentsRes.rows[0]?.total ?? "0");
 
@@ -78,6 +86,7 @@ router.get("/stats", async (req, res) => {
       expiredDocuments,
       totalVehicles,
       activeRentals,
+      overdueRentals,
       totalCommissionEarned,
       pendingPayments,
     });

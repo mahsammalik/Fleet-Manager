@@ -10,9 +10,13 @@ export type ActivityType =
   | "driver_delete"
   | "notes_update"
   | "deposit_due"
+  | "deposit_reused"
+  | "deposit_credit_consumed"
+  | "deposit_not_required"
   | "deposit_paid"
   | "deposit_refunded"
-  | "deposit_deducted";
+  | "deposit_deducted"
+  | "rental_auto_extended";
 
 export async function logDriverActivity(
   driverId: string,
