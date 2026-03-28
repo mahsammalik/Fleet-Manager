@@ -16,6 +16,10 @@ import {
 } from "../../api/vehicles";
 import { VehicleDocumentUpload } from "../../components/vehicles/VehicleDocumentUpload";
 import { VehicleDocumentList } from "../../components/vehicles/VehicleDocumentList";
+import {
+  RentalCompletionModal,
+  toDateInputValue,
+} from "../../components/rentals/RentalCompletionModal";
 import { getDrivers } from "../../api/drivers";
 import { useAuthStore } from "../../store/authStore";
 import { formatCurrency } from "../../utils/currency";
@@ -130,8 +134,8 @@ export function VehicleDetailPage() {
   });
 
   const completeRentalMutation = useMutation({
-    mutationFn: (rentalId: string) =>
-      updateVehicleRental(id!, rentalId, { status: "completed" }),
+    mutationFn: ({ rentalId, completionDate }: { rentalId: string; completionDate: string }) =>
+      updateVehicleRental(id!, rentalId, { status: "completed", completionDate }),
     onSuccess: (response) => {
       const rental = response.data;
       queryClient.invalidateQueries({ queryKey: ["vehicleRentals", id] });
@@ -526,34 +530,18 @@ export function VehicleDetailPage() {
         />
       )}
 
-      {/* Complete rental confirm */}
       {completeRentalId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
-            <h3 className="text-lg font-semibold text-slate-900">Complete rental?</h3>
-            <p className="text-sm text-slate-600 mt-2">
-              The vehicle will be marked as available and the rental will be closed.
-            </p>
-            <div className="flex gap-2 mt-4">
-              <button
-                type="button"
-                onClick={() => completeRentalMutation.mutate(completeRentalId)}
-                disabled={completeRentalMutation.isPending}
-                className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
-              >
-                {completeRentalMutation.isPending ? "Completing..." : "Complete"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setCompleteRentalId(null)}
-                disabled={completeRentalMutation.isPending}
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <RentalCompletionModal
+          open
+          onClose={() => setCompleteRentalId(null)}
+          title="Complete rental?"
+          description="The vehicle will be marked as available and the rental will be closed."
+          minDate={toDateInputValue(rentals.find((r) => r.id === completeRentalId)?.rental_start_date)}
+          isSubmitting={completeRentalMutation.isPending}
+          onConfirm={(completionDate) =>
+            completeRentalMutation.mutate({ rentalId: completeRentalId, completionDate })
+          }
+        />
       )}
 
       {/* Add maintenance modal */}

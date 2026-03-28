@@ -8,6 +8,10 @@ import {
   getOverdueRentals,
   type OverdueRentalItem,
 } from "../../api/rentals";
+import {
+  RentalCompletionModal,
+  toDateInputValue,
+} from "../../components/rentals/RentalCompletionModal";
 import { formatCurrency } from "../../utils/currency";
 
 function formatDate(value: string | null | undefined): string {
@@ -23,6 +27,11 @@ export function OverdueRentalsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [extendRentalId, setExtendRentalId] = useState<string | null>(null);
   const [newEndDate, setNewEndDate] = useState("");
+  const [completeTarget, setCompleteTarget] = useState<
+    | { mode: "single"; rentalId: string; minDate?: string }
+    | { mode: "bulk"; rentalIds: string[]; minDate?: string }
+    | null
+  >(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["overdueRentals", minOverdueDays, vehicleId, driverId],
@@ -37,12 +46,14 @@ export function OverdueRentalsPage() {
   const rentals = data?.data ?? [];
 
   const completeMutation = useMutation({
-    mutationFn: (rentalId: string) => completeOverdueRental(rentalId),
+    mutationFn: ({ rentalId, completionDate }: { rentalId: string; completionDate: string }) =>
+      completeOverdueRental(rentalId, { completionDate }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["overdueRentals"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
       queryClient.invalidateQueries({ queryKey: ["vehicles"] });
       queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      setCompleteTarget(null);
     },
   });
 
@@ -57,13 +68,15 @@ export function OverdueRentalsPage() {
   });
 
   const bulkCompleteMutation = useMutation({
-    mutationFn: (rentalIds: string[]) => bulkCompleteOverdueRentals(rentalIds),
+    mutationFn: ({ rentalIds, completionDate }: { rentalIds: string[]; completionDate: string }) =>
+      bulkCompleteOverdueRentals(rentalIds, completionDate),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["overdueRentals"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
       queryClient.invalidateQueries({ queryKey: ["vehicles"] });
       queryClient.invalidateQueries({ queryKey: ["drivers"] });
       setSelectedIds([]);
+      setCompleteTarget(null);
     },
   });
 
@@ -77,6 +90,15 @@ export function OverdueRentalsPage() {
       prev.includes(rentalId) ? prev.filter((id) => id !== rentalId) : [...prev, rentalId],
     );
   };
+
+  function bulkCompletionMinDate(rentalIds: string[]): string | undefined {
+    const rows = rentals.filter((r) => rentalIds.includes(r.rental_id));
+    const starts = rows
+      .map((r) => toDateInputValue(r.rental_start_date))
+      .filter((d): d is string => Boolean(d));
+    if (starts.length === 0) return undefined;
+    return starts.reduce((a, b) => (a > b ? a : b));
+  }
 
   if (isLoading) {
     return <div className="p-6 text-sm text-slate-600">Loading overdue rentals...</div>;
@@ -145,7 +167,13 @@ export function OverdueRentalsPage() {
             <button
               type="button"
               disabled={selectedIds.length === 0 || bulkCompleteMutation.isPending}
-              onClick={() => bulkCompleteMutation.mutate(selectedIds)}
+              onClick={() =>
+                setCompleteTarget({
+                  mode: "bulk",
+                  rentalIds: selectedIds,
+                  minDate: bulkCompletionMinDate(selectedIds),
+                })
+              }
               className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
             >
               {bulkCompleteMutation.isPending ? "Completing..." : `Complete selected (${selectedIds.length})`}
@@ -199,7 +227,13 @@ export function OverdueRentalsPage() {
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => completeMutation.mutate(r.rental_id)}
+                          onClick={() =>
+                            setCompleteTarget({
+                              mode: "single",
+                              rentalId: r.rental_id,
+                              minDate: toDateInputValue(r.rental_start_date),
+                            })
+                          }
                           disabled={completeMutation.isPending}
                           className="text-sky-600 hover:underline"
                         >
@@ -228,6 +262,34 @@ export function OverdueRentalsPage() {
           </div>
         </section>
       </main>
+
+      {completeTarget && (
+        <RentalCompletionModal
+          open
+          onClose={() => setCompleteTarget(null)}
+          title={completeTarget.mode === "bulk" ? "Complete selected rentals" : "Complete rental"}
+          description={
+            completeTarget.mode === "bulk"
+              ? `You are about to complete ${completeTarget.rentalIds.length} overdue rental(s). The vehicle(s) will be marked available where applicable.`
+              : "Choose the actual completion date. The rental will be closed and totals updated."
+          }
+          minDate={completeTarget.minDate}
+          bulkHint={
+            completeTarget.mode === "bulk"
+              ? "The same completion date will be applied to every selected rental."
+              : undefined
+          }
+          confirmLabel={completeTarget.mode === "bulk" ? "Complete all" : "Complete"}
+          isSubmitting={completeMutation.isPending || bulkCompleteMutation.isPending}
+          onConfirm={(completionDate) => {
+            if (completeTarget.mode === "single") {
+              completeMutation.mutate({ rentalId: completeTarget.rentalId, completionDate });
+            } else {
+              bulkCompleteMutation.mutate({ rentalIds: completeTarget.rentalIds, completionDate });
+            }
+          }}
+        />
+      )}
 
       {extendRentalId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
