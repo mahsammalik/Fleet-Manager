@@ -104,6 +104,8 @@ export interface CreateRentalPayload {
 
 export interface UpdateRentalPayload {
   status?: RentalStatus;
+  /** YYYY-MM-DD; used when completing a rental */
+  completionDate?: string;
   paymentStatus?: PaymentStatus;
   paymentDate?: string;
   paymentMethod?: string;

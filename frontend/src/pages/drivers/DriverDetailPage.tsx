@@ -16,6 +16,10 @@ import {
   PLATFORM_ID_LABELS,
 } from "../../constants/platformIds";
 import { DriverAvatar } from "../../components/drivers/DriverAvatar";
+import {
+  RentalCompletionModal,
+  toDateInputValue,
+} from "../../components/rentals/RentalCompletionModal";
 import { updateVehicleRental } from "../../api/vehicles";
 import { useAuthStore } from "../../store/authStore";
 import { DocumentUpload } from "../../components/documents/DocumentUpload";
@@ -104,10 +108,13 @@ export function DriverDetailPage() {
   });
 
   const endRentalMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ completionDate }: { completionDate: string }) => {
       const rental = activeRental;
       if (!rental) throw new Error("No active rental");
-      return updateVehicleRental(rental.vehicle_id, rental.rental_id, { status: "completed" });
+      return updateVehicleRental(rental.vehicle_id, rental.rental_id, {
+        status: "completed",
+        completionDate,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["driver", id] });
@@ -487,32 +494,16 @@ export function DriverDetailPage() {
       )}
 
       {endRentalConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
-            <h3 className="text-lg font-semibold text-slate-900">End rental?</h3>
-            <p className="text-sm text-slate-600 mt-2">
-              This will mark the current rental as completed and unassign the vehicle from this driver.
-            </p>
-            <div className="flex gap-2 mt-4">
-              <button
-                type="button"
-                onClick={() => endRentalMutation.mutate()}
-                disabled={endRentalMutation.isPending}
-                className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
-              >
-                {endRentalMutation.isPending ? "Ending..." : "End rental"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setEndRentalConfirm(false)}
-                disabled={endRentalMutation.isPending}
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <RentalCompletionModal
+          open
+          onClose={() => setEndRentalConfirm(false)}
+          title="End rental?"
+          description="This will mark the current rental as completed and unassign the vehicle from this driver."
+          minDate={activeRental ? toDateInputValue(activeRental.rental_start_date) : undefined}
+          confirmLabel="End rental"
+          isSubmitting={endRentalMutation.isPending}
+          onConfirm={(completionDate) => endRentalMutation.mutate({ completionDate })}
+        />
       )}
     </div>
   );
