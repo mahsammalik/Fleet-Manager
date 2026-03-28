@@ -28,8 +28,8 @@ export function OverdueRentalsPage() {
   const [extendRentalId, setExtendRentalId] = useState<string | null>(null);
   const [newEndDate, setNewEndDate] = useState("");
   const [completeTarget, setCompleteTarget] = useState<
-    | { mode: "single"; rentalId: string; minDate?: string }
-    | { mode: "bulk"; rentalIds: string[]; minDate?: string }
+    | { mode: "single"; rentalId: string; minDate?: string; defaultDate?: string }
+    | { mode: "bulk"; rentalIds: string[]; minDate?: string; defaultDate?: string }
     | null
   >(null);
 
@@ -98,6 +98,16 @@ export function OverdueRentalsPage() {
       .filter((d): d is string => Boolean(d));
     if (starts.length === 0) return undefined;
     return starts.reduce((a, b) => (a > b ? a : b));
+  }
+
+  /** Latest planned end among selected (reasonable default for bulk completion date). */
+  function bulkCompletionDefaultEndDate(rentalIds: string[]): string | undefined {
+    const rows = rentals.filter((r) => rentalIds.includes(r.rental_id));
+    const ends = rows
+      .map((r) => toDateInputValue(r.rental_end_date))
+      .filter((d): d is string => Boolean(d));
+    if (ends.length === 0) return undefined;
+    return ends.reduce((a, b) => (a > b ? a : b));
   }
 
   if (isLoading) {
@@ -172,6 +182,7 @@ export function OverdueRentalsPage() {
                   mode: "bulk",
                   rentalIds: selectedIds,
                   minDate: bulkCompletionMinDate(selectedIds),
+                  defaultDate: bulkCompletionDefaultEndDate(selectedIds),
                 })
               }
               className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
@@ -232,6 +243,7 @@ export function OverdueRentalsPage() {
                               mode: "single",
                               rentalId: r.rental_id,
                               minDate: toDateInputValue(r.rental_start_date),
+                              defaultDate: toDateInputValue(r.rental_end_date),
                             })
                           }
                           disabled={completeMutation.isPending}
@@ -274,6 +286,7 @@ export function OverdueRentalsPage() {
               : "Choose the actual completion date. The rental will be closed and totals updated."
           }
           minDate={completeTarget.minDate}
+          defaultDate={completeTarget.defaultDate}
           bulkHint={
             completeTarget.mode === "bulk"
               ? "The same completion date will be applied to every selected rental."

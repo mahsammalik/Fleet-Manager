@@ -12,7 +12,10 @@ export type RentalCompletionModalProps = {
   onClose: () => void;
   title: string;
   description?: string;
-  /** YYYY-MM-DD when modal opens */
+  /**
+   * Initial date when the modal opens (YYYY-MM-DD).
+   * Pass the rental's planned `rental_end_date` when completing; falls back to today if omitted.
+   */
   defaultDate?: string;
   /** YYYY-MM-DD min for date input */
   minDate?: string;
