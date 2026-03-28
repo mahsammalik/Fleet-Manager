@@ -500,6 +500,7 @@ export function DriverDetailPage() {
           title="End rental?"
           description="This will mark the current rental as completed and unassign the vehicle from this driver."
           minDate={activeRental ? toDateInputValue(activeRental.rental_start_date) : undefined}
+          defaultDate={activeRental ? toDateInputValue(activeRental.rental_end_date) : undefined}
           confirmLabel="End rental"
           isSubmitting={endRentalMutation.isPending}
           onConfirm={(completionDate) => endRentalMutation.mutate({ completionDate })}

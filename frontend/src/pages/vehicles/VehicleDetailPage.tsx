@@ -537,6 +537,7 @@ export function VehicleDetailPage() {
           title="Complete rental?"
           description="The vehicle will be marked as available and the rental will be closed."
           minDate={toDateInputValue(rentals.find((r) => r.id === completeRentalId)?.rental_start_date)}
+          defaultDate={toDateInputValue(rentals.find((r) => r.id === completeRentalId)?.rental_end_date)}
           isSubmitting={completeRentalMutation.isPending}
           onConfirm={(completionDate) =>
             completeRentalMutation.mutate({ rentalId: completeRentalId, completionDate })
