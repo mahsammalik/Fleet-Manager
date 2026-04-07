@@ -375,10 +375,10 @@ router.post("/earnings/import/commit", async (req, res) => {
         fee: f,
         net: n,
         company_commission: comm.company_commission,
-        // Driver payout = transfer + abs(cash) - total commission.
+        // Driver payout = transfer + signed cash - total commission.
         driver_payout: Math.max(
           0,
-          Math.round((transferAmount + Math.abs(dailyCash) - comm.company_commission) * 100) / 100,
+          Math.round((transferAmount + dailyCash - comm.company_commission) * 100) / 100,
         ),
         commission_type: comm.commission_type,
       });
