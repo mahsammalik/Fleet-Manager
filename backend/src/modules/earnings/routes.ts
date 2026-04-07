@@ -30,6 +30,7 @@ function collectWarnings(
   colMap: Map<number, import("./normalizeRow").CanonicalField>,
   normalizedRows: ReturnType<typeof rowCellsToNormalized>[],
   filenameDate: string | null,
+  platform: EarningsPlatform,
 ): string[] {
   const w: string[] = [];
   const hasGross = [...colMap.values()].includes("gross");
@@ -60,6 +61,19 @@ function collectWarnings(
   if (noDate > 0) w.push(`${noDate} row(s) are missing trip dates.`);
   const dups = [...dupKeys.values()].filter((c) => c > 1).length;
   if (dups > 0) w.push("Possible duplicate rows detected (same identifiers, date, and amounts).");
+  if (platform === "glovo") {
+    const hasFeeCol = [...colMap.values()].includes("platform_fee");
+    const missingFee = normalizedRows.some(
+      (r) => r.amounts.platformFee == null && r.amounts.gross != null && r.amounts.net != null,
+    );
+    if (missingFee) {
+      w.push(
+        hasFeeCol
+          ? "Glovo: fee (Taxa aplicatie) missing on some rows — check comma‑decimal CSV cells or use XLSX export."
+          : "Glovo: Taxa aplicatie column not detected; fee will stay empty until headers/columns are recognized.",
+      );
+    }
+  }
   return w;
 }
 
@@ -102,11 +116,13 @@ router.post("/earnings/import/preview", earningsUpload.single("file"), async (re
     const colMap = buildColumnMap(table.headers);
     const filenameDate = extractDateFromFilename(req.file.originalname);
 
-    const normalizedRows = table.rows.map((cells, idx) =>
-      rowCellsToNormalized(cells, colMap, filenameDate),
+    const normalizedRows = table.rows.map((cells) =>
+      rowCellsToNormalized(cells, colMap, filenameDate, {
+        skipInferredPlatformFee: platform === "glovo",
+      }),
     );
 
-    const warnings = collectWarnings(colMap, normalizedRows, filenameDate);
+    const warnings = collectWarnings(colMap, normalizedRows, filenameDate, platform);
     const dates = normalizedRows.map((r) => r.tripDateIso).filter((d): d is string => !!d);
     const { weekStart, weekEnd } = weekBoundsFromDates(dates);
 
@@ -345,7 +361,6 @@ router.post("/earnings/import/commit", async (req, res) => {
       const gross = p.amounts.gross;
       const net = p.amounts.net;
       const fee = p.amounts.platformFee;
-      const dailyCash = p.amounts.dailyCash ?? 0;
       if (gross === null && net === null) {
         skippedNoMoney += 1;
         continue;
@@ -357,15 +372,18 @@ router.post("/earnings/import/commit", async (req, res) => {
         continue;
       }
 
-      const transferAmount = net ?? gross ?? 0;
-      const comm = computeCommissionComponents(drv, transferAmount, dailyCash);
-
       let g = gross;
       let n = net;
       let f = fee;
       if (g === null && n !== null && f !== null) g = n + f;
       if (n === null && g !== null && f !== null) n = g - f;
       if (f === null && g !== null && n !== null) f = g - n;
+      // Platform fee stored as positive magnitude (defensive for older staged payloads).
+      if (f !== null && f < 0) f = Math.abs(f);
+
+      // Commission and payout only on transfer (Total Venituri), not raw gross fallback.
+      const transferAmount = n ?? g ?? 0;
+      const comm = computeCommissionComponents(drv, transferAmount, 0);
 
       toInsert.push({
         driver_id: driverId,
@@ -375,10 +393,10 @@ router.post("/earnings/import/commit", async (req, res) => {
         fee: f,
         net: n,
         company_commission: comm.company_commission,
-        // Driver payout = transfer + signed cash - total commission.
+        // Driver payout is based only on transfer amount (cash settled separately).
         driver_payout: Math.max(
           0,
-          Math.round((transferAmount + dailyCash - comm.company_commission) * 100) / 100,
+          Math.round((transferAmount - comm.company_commission) * 100) / 100,
         ),
         commission_type: comm.commission_type,
       });

@@ -68,10 +68,19 @@ function cleanHint(s: string): string | undefined {
   return v.length ? v : undefined;
 }
 
+export interface RowNormalizeOptions {
+  /**
+   * When set (e.g. Glovo), do not set platformFee from |gross - net|.
+   * That difference is often the “Ajustări” bucket, not Taxa aplicatie.
+   */
+  skipInferredPlatformFee?: boolean;
+}
+
 export function rowCellsToNormalized(
   cells: string[],
   colMap: Map<number, CanonicalField>,
   fallbackTripDate: string | null,
+  opts?: RowNormalizeOptions,
 ): NormalizedEarningsRow {
   const hints: RowHints = {};
   let tripDateIso: string | null = null;
@@ -106,9 +115,12 @@ export function rowCellsToNormalized(
       case "net":
         amounts.net = parseRoNumber(raw);
         break;
-      case "platform_fee":
-        amounts.platformFee = parseRoNumber(raw);
+      case "platform_fee": {
+        const v = parseRoNumber(raw);
+        // Exports may show platform fee as negative; store magnitude as positive.
+        amounts.platformFee = v === null ? null : Math.abs(v);
         break;
+      }
       case "daily_cash":
         amounts.dailyCash = parseRoNumber(raw);
         break;
@@ -129,8 +141,17 @@ export function rowCellsToNormalized(
   if (amounts.net === null && amounts.gross !== null && amounts.platformFee !== null) {
     amounts.net = amounts.gross - amounts.platformFee;
   }
-  if (amounts.platformFee === null && amounts.gross !== null && amounts.net !== null) {
-    amounts.platformFee = amounts.gross - amounts.net;
+  if (
+    !opts?.skipInferredPlatformFee &&
+    amounts.platformFee === null &&
+    amounts.gross !== null &&
+    amounts.net !== null
+  ) {
+    amounts.platformFee = Math.abs(amounts.gross - amounts.net);
+  }
+
+  if (amounts.platformFee !== null && amounts.platformFee < 0) {
+    amounts.platformFee = Math.abs(amounts.platformFee);
   }
 
   return { tripDateIso, hints, amounts, rawSample };

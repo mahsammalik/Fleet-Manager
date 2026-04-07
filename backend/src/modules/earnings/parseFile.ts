@@ -9,6 +9,76 @@ export interface ParsedTable {
   rows: string[][];
 }
 
+/**
+ * Glovo / RO exports often use comma as CSV separator AND comma as decimal separator
+ * (e.g. 2.432,30). Naive comma-split shifts columns so "Fee" reads Ajustari Totale instead of Taxa aplicatie.
+ */
+function mergeEuropeanCommaDecimalFields(parts: string[], targetLen: number): string[] {
+  if (parts.length <= targetLen || targetLen <= 0) return parts;
+  const cells = [...parts];
+  let guard = 0;
+  while (cells.length > targetLen && guard < cells.length * 4) {
+    guard += 1;
+    let merged = false;
+    for (let i = 0; i < cells.length - 1; i++) {
+      const L = cells[i].trim();
+      const R = cells[i + 1].trim();
+      if (L === "" || R === "") continue;
+      if (L === "0" && R === "0") continue;
+      const Lc = L.replace(/\s/g, "");
+      const Rc = R.replace(/\s/g, "");
+      if (!/^\d{1,2}$/.test(Rc)) continue;
+      if (Rc === "0") continue;
+      const thousandsAndCents = /^-?\d{1,3}(\.\d{3})+$/.test(Lc);
+      if (thousandsAndCents) {
+        cells.splice(i, 2, `${L},${R}`);
+        merged = true;
+        break;
+      }
+      if (/^-\d+$/.test(Lc)) {
+        cells.splice(i, 2, `${L},${R}`);
+        merged = true;
+        break;
+      }
+      if (!/^-?\d+$/.test(Lc)) continue;
+      const absL = Lc.replace(/^-/, "");
+      const nL = parseInt(absL, 10);
+      // e.g. 1974,3 (Comenzi) — 4+ digit integer part + 1–2 digit fractional without merging 458,30
+      if (/^\d{1,2}$/.test(Rc) && absL.length >= 4 && !absL.startsWith("0")) {
+        cells.splice(i, 2, `${L},${R}`);
+        merged = true;
+        break;
+      }
+      if (nL < 100) continue;
+      // 1000+ or mid-range amounts like 116,82; avoid merging 458 + two-digit next column
+      if (nL >= 1000 || (Rc.length === 2 && nL >= 100 && nL <= 399)) {
+        cells.splice(i, 2, `${L},${R}`);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged && cells.length > targetLen) {
+      for (let i = 0; i < cells.length - 1; i++) {
+        const L = cells[i].trim();
+        const R = cells[i + 1].trim();
+        if (L === "" || R === "") continue;
+        const Lc = L.replace(/\s/g, "");
+        const Rc = R.replace(/\s/g, "");
+        if (!/^\d+$/.test(Lc) || !/^\d{2}$/.test(Rc)) continue;
+        if (Lc === "0" && Rc === "0") continue;
+        const nL = parseInt(Lc, 10);
+        if (nL >= 10 && nL <= 99) {
+          cells.splice(i, 2, `${L},${R}`);
+          merged = true;
+          break;
+        }
+      }
+    }
+    if (!merged) break;
+  }
+  return cells;
+}
+
 function parseDelimitedText(text: string): ParsedTable {
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length === 0) return { headers: [], rows: [] };
@@ -33,7 +103,14 @@ function parseDelimitedText(text: string): ParsedTable {
     return out;
   };
   const headers = split(lines[0]).map((h) => h.replace(/^"|"$/g, ""));
-  const rows = lines.slice(1).map((line) => split(line).map((c) => c.replace(/^"|"$/g, "")));
+  const headerCount = headers.length;
+  const rows = lines.slice(1).map((line) => {
+    let cells = split(line).map((c) => c.replace(/^"|"$/g, ""));
+    if (delim === "," && headerCount > 0 && cells.length > headerCount) {
+      cells = mergeEuropeanCommaDecimalFields(cells, headerCount);
+    }
+    return cells;
+  });
   return { headers, rows };
 }
 

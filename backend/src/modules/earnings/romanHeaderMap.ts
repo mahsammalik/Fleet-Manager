@@ -105,6 +105,8 @@ reg(
 reg(
   [
     "comision platforma",
+    "taxa aplicatie",
+    "taxa de aplicatie",
     "taxa platforma",
     "platform fee",
     "service fee",
@@ -165,8 +167,17 @@ reg(
 export function buildColumnMap(headers: string[]): Map<number, CanonicalField> {
   const map = new Map<number, CanonicalField>();
   const used = new Set<CanonicalField>();
+  const norm = headers.map((h) => normalizeHeaderKey(String(h ?? "")));
+  // Match "Taxa aplicatie", "Taxa aplicatie Glovo", "Taxa de aplicatie", etc.
+  const taxaIdx = norm.findIndex(
+    (k) => k.includes("taxa aplicatie") || k.includes("taxa de aplicatie"),
+  );
+  if (taxaIdx >= 0) {
+    map.set(taxaIdx, "platform_fee");
+    used.add("platform_fee");
+  }
   headers.forEach((h, idx) => {
-    const key = normalizeHeaderKey(String(h ?? ""));
+    const key = norm[idx];
     if (!key) return;
     const canon = ALIAS_TO_CANONICAL[key];
     if (canon && !used.has(canon)) {
