@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useAuthStore } from "../../store/authStore";
@@ -14,6 +15,7 @@ import { ChartPlaceholder } from "../../components/dashboard/ChartPlaceholder";
 import { ActivityTable, type ActivityRow } from "../../components/dashboard/ActivityTable";
 import { DriverStatusChart } from "../../components/dashboard/DriverStatusChart";
 import { EarningsChart } from "../../components/dashboard/EarningsChart";
+import { EarningsImportModal } from "../../components/dashboard/EarningsImportModal";
 import { DocumentStatsChart } from "../../components/dashboard/DocumentStatsChart";
 import { formatCurrency } from "../../utils/currency";
 
@@ -102,6 +104,8 @@ function VehicleIcon() {
 
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
+  const canImportEarnings = user?.role === "admin" || user?.role === "accountant";
+  const [earningsImportOpen, setEarningsImportOpen] = useState(false);
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   const statsQuery = useQuery({ queryKey: ["dashboard", "stats"], queryFn: () => getDashboardStats() });
@@ -226,6 +230,25 @@ export function DashboardPage() {
               />
             </div>
           </section>
+
+          {canImportEarnings && (
+            <section className="mb-8">
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">Earnings import</h2>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <p className="text-sm text-slate-600">
+                  Upload platform CSV or spreadsheet, confirm provider and pay period, then import.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setEarningsImportOpen(true)}
+                  className="shrink-0 rounded-lg bg-sky-600 text-white text-sm font-medium px-4 py-2 hover:bg-sky-700"
+                >
+                  Import earnings
+                </button>
+              </div>
+              <EarningsImportModal open={earningsImportOpen} onClose={() => setEarningsImportOpen(false)} />
+            </section>
+          )}
 
           <section className="mb-8">
             <h2 className="text-sm font-semibold text-slate-700 mb-4">Analytics</h2>

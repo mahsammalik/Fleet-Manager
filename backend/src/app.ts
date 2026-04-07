@@ -7,6 +7,7 @@ import { documentRoutes } from "./modules/documents/routes";
 import { dashboardRoutes } from "./modules/dashboard/routes";
 import { vehicleRoutes } from "./modules/vehicles/routes";
 import { vehicleDocumentRoutes } from "./modules/vehicleDocuments/routes";
+import { earningsImportRoutes } from "./modules/earnings/routes";
 
 export const app = express();
 
@@ -26,6 +27,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/drivers", documentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/dashboard", earningsImportRoutes);
 app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/vehicles", vehicleDocumentRoutes);
 
@@ -37,10 +39,17 @@ app.get("/health", (_req, res) => {
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const m = err as { code?: string; message?: string };
   if (m.code === "LIMIT_FILE_SIZE") {
-    return res.status(413).json({ message: "File too large. Maximum size is 10MB." });
+    return res.status(413).json({
+      message: "File too large. Driver documents: 10MB max. Earnings uploads: 40MB max.",
+    });
   }
   if (m.message && typeof m.message === "string") {
-    if (m.message.includes("Only PDF") || m.message.includes("Profile photo") || m.message.includes("JPG or PNG")) {
+    if (
+      m.message.includes("Only PDF") ||
+      m.message.includes("Profile photo") ||
+      m.message.includes("JPG or PNG") ||
+      m.message.includes("Earnings upload:")
+    ) {
       return res.status(400).json({ message: m.message });
     }
   }

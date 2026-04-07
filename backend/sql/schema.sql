@@ -132,11 +132,22 @@ CREATE TABLE IF NOT EXISTS earnings_imports (
     import_date DATE NOT NULL,
     week_start DATE NOT NULL,
     week_end DATE NOT NULL,
-    platform VARCHAR(50) NOT NULL CHECK (platform IN ('uber', 'bolt')),
+    platform VARCHAR(50) NOT NULL CHECK (platform IN ('uber', 'bolt', 'glovo', 'bolt_courier', 'wolt_courier')),
     total_gross DECIMAL(12, 2),
     total_trips INTEGER,
     record_count INTEGER,
     imported_by UUID REFERENCES users(id),
+    status VARCHAR(50) NOT NULL DEFAULT 'completed' CHECK (status IN ('preview', 'completed', 'failed')),
+    detection_meta JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS earnings_import_staging (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    import_id UUID NOT NULL REFERENCES earnings_imports(id) ON DELETE CASCADE,
+    row_index INTEGER NOT NULL,
+    payload JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -183,12 +194,15 @@ CREATE TABLE IF NOT EXISTS driver_payments (
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_earnings_imports_org ON earnings_imports(organization_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_staging_import ON earnings_import_staging(import_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_staging_org ON earnings_import_staging(organization_id);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_driver ON earnings_records(driver_id);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_date ON earnings_records(trip_date);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_import ON earnings_records(import_id);
 CREATE INDEX IF NOT EXISTS idx_driver_payments_driver ON driver_payments(driver_id);
 CREATE INDEX IF NOT EXISTS idx_driver_payments_status ON driver_payments(payment_status);
 CREATE INDEX IF NOT EXISTS idx_driver_payments_period ON driver_payments(payment_period_start, payment_period_end);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_payments_org_driver_period ON driver_payments (organization_id, driver_id, payment_period_start, payment_period_end);
 
 -- Vehicles (company-owned, rented to drivers)
 CREATE TABLE IF NOT EXISTS vehicles (

@@ -167,6 +167,9 @@ export function EditDriverPage() {
       minimumCommission: form.minimumCommission ?? 0,
       uberDriverId: form.uberDriverId?.trim() || undefined,
       boltDriverId: form.boltDriverId?.trim() || undefined,
+      glovoCourierId: form.glovoCourierId?.trim() || undefined,
+      boltCourierId: form.boltCourierId?.trim() || undefined,
+      woltCourierId: form.woltCourierId?.trim() || undefined,
       notes: form.notes?.trim() || undefined,
     };
     mutation.mutate(payload);

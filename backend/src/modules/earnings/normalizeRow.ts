@@ -1,0 +1,137 @@
+export type CanonicalField =
+  | "plate"
+  | "phone"
+  | "courier_id"
+  | "trip_date"
+  | "gross"
+  | "platform_fee"
+  | "net"
+  | "daily_cash"
+  | "trips";
+
+export interface RowHints {
+  courierId?: string;
+  phone?: string;
+  plate?: string;
+}
+
+export interface NormalizedAmounts {
+  gross: number | null;
+  net: number | null;
+  platformFee: number | null;
+  dailyCash: number | null;
+  tripCount: number | null;
+}
+
+export interface NormalizedEarningsRow {
+  tripDateIso: string | null;
+  hints: RowHints;
+  amounts: NormalizedAmounts;
+  rawSample: Record<string, string>;
+}
+
+function parseRoNumber(s: string): number | null {
+  const t = s.replace(/\s/g, "").replace(",", ".");
+  if (!t || t === "-") return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseRoDate(s: string): string | null {
+  const t = s.trim();
+  if (!t) return null;
+  const iso = /^\d{4}-\d{2}-\d{2}/.exec(t);
+  if (iso) return iso[0];
+  const dmy = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/.exec(t);
+  if (dmy) {
+    let d = parseInt(dmy[1], 10);
+    let m = parseInt(dmy[2], 10);
+    let y = parseInt(dmy[3], 10);
+    if (y < 100) y += 2000;
+    if (m > 12 && d <= 12) {
+      const tmp = d;
+      d = m;
+      m = tmp;
+    }
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (!Number.isNaN(dt.getTime())) {
+      return dt.toISOString().slice(0, 10);
+    }
+  }
+  const d = new Date(t);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+function cleanHint(s: string): string | undefined {
+  const v = s.trim();
+  return v.length ? v : undefined;
+}
+
+export function rowCellsToNormalized(
+  cells: string[],
+  colMap: Map<number, CanonicalField>,
+  fallbackTripDate: string | null,
+): NormalizedEarningsRow {
+  const hints: RowHints = {};
+  let tripDateIso: string | null = null;
+  const amounts: NormalizedAmounts = {
+    gross: null,
+    net: null,
+    platformFee: null,
+    dailyCash: null,
+    tripCount: null,
+  };
+  const rawSample: Record<string, string> = {};
+
+  colMap.forEach((field, idx) => {
+    const raw = String(cells[idx] ?? "").trim();
+    if (raw) rawSample[field] = raw;
+    switch (field) {
+      case "plate":
+        hints.plate = cleanHint(raw);
+        break;
+      case "phone":
+        hints.phone = cleanHint(raw);
+        break;
+      case "courier_id":
+        hints.courierId = cleanHint(raw);
+        break;
+      case "trip_date":
+        tripDateIso = parseRoDate(raw) ?? tripDateIso;
+        break;
+      case "gross":
+        amounts.gross = parseRoNumber(raw);
+        break;
+      case "net":
+        amounts.net = parseRoNumber(raw);
+        break;
+      case "platform_fee":
+        amounts.platformFee = parseRoNumber(raw);
+        break;
+      case "daily_cash":
+        amounts.dailyCash = parseRoNumber(raw);
+        break;
+      case "trips":
+        amounts.tripCount = parseRoNumber(raw);
+        if (amounts.tripCount !== null) amounts.tripCount = Math.round(amounts.tripCount);
+        break;
+      default:
+        break;
+    }
+  });
+
+  if (!tripDateIso && fallbackTripDate) tripDateIso = fallbackTripDate;
+
+  if (amounts.gross === null && amounts.net !== null && amounts.platformFee !== null) {
+    amounts.gross = amounts.net + amounts.platformFee;
+  }
+  if (amounts.net === null && amounts.gross !== null && amounts.platformFee !== null) {
+    amounts.net = amounts.gross - amounts.platformFee;
+  }
+  if (amounts.platformFee === null && amounts.gross !== null && amounts.net !== null) {
+    amounts.platformFee = amounts.gross - amounts.net;
+  }
+
+  return { tripDateIso, hints, amounts, rawSample };
+}

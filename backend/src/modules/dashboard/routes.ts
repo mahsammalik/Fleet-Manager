@@ -127,8 +127,31 @@ router.get("/earnings/monthly", async (req, res) => {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
   try {
-    return res.json([]);
+    const { rows } = await query<{ m: Date | string; total: string | null; commission: string | null }>(
+      `SELECT date_trunc('month', er.trip_date AT TIME ZONE 'UTC') AS m,
+              SUM(COALESCE(er.gross_earnings, 0))::text AS total,
+              SUM(COALESCE(er.company_commission, 0))::text AS commission
+       FROM earnings_records er
+       INNER JOIN drivers d ON er.driver_id = d.id
+       WHERE d.organization_id = $1
+       GROUP BY 1
+       ORDER BY 1 ASC`,
+      [orgId],
+    );
+    return res.json(
+      rows.map((r) => {
+        const monthDate = r.m instanceof Date ? r.m : new Date(r.m);
+        const label = monthDate.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+        return {
+          month: label,
+          totalEarnings: parseFloat(r.total ?? "0"),
+          totalCommission: parseFloat(r.commission ?? "0"),
+        };
+      }),
+    );
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Dashboard earnings monthly error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });
