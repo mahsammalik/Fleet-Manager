@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS earnings_records (
                 COALESCE(gross_earnings, 0) - COALESCE(platform_fee, 0),
                 gross_earnings,
                 0
-              ) - COALESCE(company_commission, 0)
+              ) - ABS(COALESCE(transfer_commission, 0)) - ABS(COALESCE(cash_commission, 0))
             )::numeric,
             2
           )
@@ -392,7 +392,14 @@ BEGIN
 
   NEW.driver_payout := GREATEST(
     0,
-    ROUND((transfer_base - COALESCE(NEW.company_commission, 0))::numeric, 2)
+    ROUND(
+      (
+        transfer_base
+        - ABS(COALESCE(NEW.transfer_commission, 0))
+        - ABS(COALESCE(NEW.cash_commission, 0))
+      )::numeric,
+      2
+    )
   );
   NEW.net_earnings := NEW.driver_payout;
   RETURN NEW;

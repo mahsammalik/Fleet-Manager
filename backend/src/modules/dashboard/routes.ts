@@ -245,7 +245,7 @@ router.get("/earnings/payout-integrity", async (req, res) => {
                  COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
                  er.gross_earnings,
                  0
-               ) - COALESCE(er.company_commission, 0)
+               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
              )::numeric,
              2
            )
@@ -262,7 +262,7 @@ router.get("/earnings/payout-integrity", async (req, res) => {
                    COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
                    er.gross_earnings,
                    0
-                 ) - COALESCE(er.company_commission, 0)
+                 ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
                )::numeric,
                2
              )

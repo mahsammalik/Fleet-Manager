@@ -1,12 +1,12 @@
--- Guardrails: ensure cash commission always affects payout.
--- PostgreSQL implementation (project DB is Postgres).
+-- Fix generated payout-after-cash formula:
+-- payout_after_cash = transfer_base - ABS(transfer_commission) - ABS(cash_commission)
+-- with floor at 0.
 
 ALTER TABLE earnings_records
-  ADD COLUMN IF NOT EXISTS has_cash_commission BOOLEAN
-    GENERATED ALWAYS AS (COALESCE(cash_commission, 0) < 0) STORED;
+  DROP COLUMN IF EXISTS driver_payout_after_cash;
 
 ALTER TABLE earnings_records
-  ADD COLUMN IF NOT EXISTS driver_payout_after_cash DECIMAL(10, 2)
+  ADD COLUMN driver_payout_after_cash DECIMAL(10, 2)
     GENERATED ALWAYS AS (
       GREATEST(
         0,
@@ -24,6 +24,13 @@ ALTER TABLE earnings_records
         )
       )
     ) STORED;
+
+ALTER TABLE earnings_records
+  DROP COLUMN IF EXISTS has_cash_commission;
+
+ALTER TABLE earnings_records
+  ADD COLUMN has_cash_commission BOOLEAN
+    GENERATED ALWAYS AS (COALESCE(cash_commission, 0) < 0) STORED;
 
 CREATE OR REPLACE FUNCTION trg_enforce_driver_payout_after_cash()
 RETURNS trigger
@@ -51,8 +58,6 @@ BEGIN
       2
     )
   );
-
-  -- Keep net_earnings aligned with payout semantics used in this codebase.
   NEW.net_earnings := NEW.driver_payout;
   RETURN NEW;
 END;
@@ -61,26 +66,19 @@ $$;
 DROP TRIGGER IF EXISTS trg_earnings_records_payout_after_cash ON earnings_records;
 CREATE TRIGGER trg_earnings_records_payout_after_cash
 BEFORE INSERT OR UPDATE OF
-  total_transfer_earnings, net_earnings, gross_earnings, platform_fee, company_commission
+  total_transfer_earnings, net_earnings, gross_earnings, platform_fee,
+  transfer_commission, cash_commission, company_commission
 ON earnings_records
 FOR EACH ROW
 EXECUTE FUNCTION trg_enforce_driver_payout_after_cash();
 
--- Bulk repair: all records that have negative cash commission.
 UPDATE earnings_records
 SET
   driver_payout = driver_payout_after_cash,
   net_earnings = driver_payout_after_cash
-WHERE cash_commission < 0;
+WHERE COALESCE(cash_commission, 0) < 0
+   OR id = '244e8273-c8ed-4a15-a54a-c76931e38e8d'::uuid;
 
--- Explicit broken-record repair (id provided in bug report).
-UPDATE earnings_records
-SET
-  driver_payout = driver_payout_after_cash,
-  net_earnings = driver_payout_after_cash
-WHERE id = '498c3265-1da4-44b6-b277-eb33298b55e1'::uuid;
-
--- Re-aggregate driver_payments for periods touched by repaired records.
 WITH affected AS (
   SELECT DISTINCT
     ei.organization_id,
@@ -89,8 +87,8 @@ WITH affected AS (
     ei.week_end
   FROM earnings_records er
   JOIN earnings_imports ei ON ei.id = er.import_id
-  WHERE er.cash_commission < 0
-     OR er.id = '498c3265-1da4-44b6-b277-eb33298b55e1'::uuid
+  WHERE COALESCE(er.cash_commission, 0) < 0
+     OR er.id = '244e8273-c8ed-4a15-a54a-c76931e38e8d'::uuid
 ),
 agg AS (
   SELECT

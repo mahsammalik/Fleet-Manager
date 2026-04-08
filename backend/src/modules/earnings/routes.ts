@@ -395,10 +395,8 @@ router.post("/earnings/import/commit", async (req, res) => {
       const cashAmount = p.amounts.dailyCash ?? 0;
       const comm = computeCommissionComponents(drv, transferAmount, cashAmount);
 
-      const driverPayout = Math.max(
-        0,
-        Math.round((transferAmount - comm.company_commission) * 100) / 100,
-      );
+      const payoutDeduction = Math.abs(comm.transfer_commission) + Math.abs(comm.cash_commission);
+      const driverPayout = Math.max(0, Math.round((transferAmount - payoutDeduction) * 100) / 100);
 
       toInsert.push({
         driver_id: driverId,
@@ -605,7 +603,7 @@ router.put("/earnings/payouts/:id/recalculate", async (req, res) => {
                  COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
                  er.gross_earnings,
                  0
-               ) - COALESCE(er.company_commission, 0)
+               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
              )::numeric,
              2
            )
@@ -620,7 +618,7 @@ router.put("/earnings/payouts/:id/recalculate", async (req, res) => {
                  COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
                  er.gross_earnings,
                  0
-               ) - COALESCE(er.company_commission, 0)
+               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
              )::numeric,
              2
            )
@@ -659,7 +657,7 @@ router.post("/earnings/payouts/recalculate-bulk", async (req, res) => {
                  COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
                  er.gross_earnings,
                  0
-               ) - COALESCE(er.company_commission, 0)
+               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
              )::numeric,
              2
            )
@@ -674,7 +672,7 @@ router.post("/earnings/payouts/recalculate-bulk", async (req, res) => {
                  COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
                  er.gross_earnings,
                  0
-               ) - COALESCE(er.company_commission, 0)
+               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
              )::numeric,
              2
            )
