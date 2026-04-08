@@ -12,19 +12,15 @@ import {
 import { extractDateFromFilename, weekBoundsFromDates } from "./filenameDate";
 import { parseEarningsFile } from "./parseFile";
 import { DriverMatchIndex, type DriverMatchRow } from "./matchDriver";
-import { computeCommissionComponents } from "./commission";
+import { runEarningsCommitFromStaging } from "./earningsCommit";
+import { insertEarningsPreviewStaging } from "./earningsPreviewStage";
 
 const router = Router();
 
 router.use(authenticateJWT);
 router.use(requireRole("admin", "accountant"));
 
-export interface EarningsStagingPayload {
-  tripDateIso: string | null;
-  hints: import("./normalizeRow").RowHints;
-  amounts: import("./normalizeRow").NormalizedAmounts;
-  rawSample: Record<string, string>;
-}
+export type { EarningsStagingPayload } from "./normalizeRow";
 
 function collectWarnings(
   colMap: Map<number, import("./normalizeRow").CanonicalField>,
@@ -142,6 +138,7 @@ router.post("/earnings/import/preview", earningsUpload.single("file"), async (re
         transferTotal: r.amounts.transferTotal,
         platformFee: r.amounts.platformFee,
         dailyCash: r.amounts.dailyCash,
+        accountOpeningFee: r.amounts.accountOpeningFee,
         tripCount: r.amounts.tripCount,
         matchMethod,
         driverMatched: !!driverId,
@@ -157,55 +154,19 @@ router.post("/earnings/import/preview", earningsUpload.single("file"), async (re
     let importId: string;
     try {
       await client.query("BEGIN");
-      const ins = await client.query<{ id: string }>(
-        `INSERT INTO earnings_imports (
-          organization_id, file_name, import_date, week_start, week_end, platform,
-          status, imported_by, detection_meta
-        ) VALUES ($1, $2, CURRENT_DATE, $3::date, $4::date, $5, 'preview', $6::uuid, $7::jsonb)
-        RETURNING id`,
-        [
-          orgId,
-          req.file.originalname,
-          weekStart,
-          weekEnd,
-          platform,
-          userId,
-          JSON.stringify({
-            detectedPlatform: platform,
-            detectionConfidence,
-            filenameDate,
-            headerCount: table.headers.length,
-            rowCount: table.rows.length,
-          }),
-        ],
-      );
-      const newId = ins.rows[0]?.id;
-      if (!newId) throw new Error("Failed to create earnings import");
-      importId = newId;
-
-      const chunk = 250;
-      for (let i = 0; i < normalizedRows.length; i += chunk) {
-        const slice = normalizedRows.slice(i, i + chunk);
-        const values: unknown[] = [];
-        const ph: string[] = [];
-        let p = 1;
-        for (let j = 0; j < slice.length; j++) {
-          const rowIndex = i + j;
-          const r = slice[j];
-          const payload: EarningsStagingPayload = {
-            tripDateIso: r.tripDateIso,
-            hints: r.hints,
-            amounts: r.amounts,
-            rawSample: r.rawSample,
-          };
-          ph.push(`($${p++}, $${p++}, $${p++}, $${p++}::jsonb)`);
-          values.push(orgId, importId, rowIndex, JSON.stringify(payload));
-        }
-        await client.query(
-          `INSERT INTO earnings_import_staging (organization_id, import_id, row_index, payload) VALUES ${ph.join(",")}`,
-          values,
-        );
-      }
+      importId = await insertEarningsPreviewStaging(client, {
+        orgId,
+        userId,
+        fileName: req.file.originalname,
+        weekStart,
+        weekEnd,
+        platform,
+        detectionConfidence,
+        filenameDate,
+        headerCount: table.headers.length,
+        rowCount: table.rows.length,
+        normalizedRows,
+      });
       await client.query("COMMIT");
     } catch (e) {
       try {
@@ -319,229 +280,24 @@ router.post("/earnings/import/commit", async (req, res) => {
       [platformEff, weekStartEff, weekEndEff, importId, orgId],
     );
 
-    const staging = await client.query<{ row_index: number; payload: EarningsStagingPayload }>(
-      `SELECT row_index, payload FROM earnings_import_staging WHERE import_id = $1 ORDER BY row_index`,
-      [importId],
+    const commitResult = await runEarningsCommitFromStaging(
+      client,
+      orgId,
+      importId,
+      platformEff,
+      weekStartEff,
+      weekEndEff,
     );
-
-    const index = await loadMatchIndex(orgId);
-    const driversRes = await client.query<DriverMatchRow & { id: string }>(
-      `SELECT id, phone, uber_driver_id, bolt_driver_id, glovo_courier_id, bolt_courier_id, wolt_courier_id,
-              commission_type, commission_rate::text, fixed_commission_amount::text, minimum_commission::text
-       FROM drivers WHERE organization_id = $1`,
-      [orgId],
-    );
-    const driverById = new Map(driversRes.rows.map((d) => [d.id, d]));
-
-    type InsertRow = {
-      driver_id: string;
-      trip_date: string;
-      trip_count: number | null;
-      gross: number | null;
-      fee: number | null;
-      net: number | null;
-      total_transfer_earnings: number | null;
-      daily_cash: number | null;
-      transfer_commission: number;
-      cash_commission: number;
-      company_commission: number;
-      driver_payout: number;
-      commission_type: string;
-    };
-
-    const toInsert: InsertRow[] = [];
-    let skippedNoDriver = 0;
-    let skippedNoDate = 0;
-    let skippedNoMoney = 0;
-
-    for (const row of staging.rows) {
-      const p = row.payload;
-      const { driverId } = index.match(platformEff, p.hints);
-      if (!driverId) {
-        skippedNoDriver += 1;
-        continue;
-      }
-      const tripDateIso = p.tripDateIso ?? weekEndEff;
-      if (!tripDateIso) {
-        skippedNoDate += 1;
-        continue;
-      }
-      const gross = p.amounts.gross;
-      const net = p.amounts.net;
-      const fee = p.amounts.platformFee;
-      const transferTotalRaw = p.amounts.transferTotal ?? null;
-      if (gross === null && net === null && transferTotalRaw === null) {
-        skippedNoMoney += 1;
-        continue;
-      }
-
-      const drv = driverById.get(driverId);
-      if (!drv) {
-        skippedNoDriver += 1;
-        continue;
-      }
-
-      let g = gross;
-      let n = net;
-      let f = fee;
-      if (g === null && n !== null && f !== null) g = n + f;
-      if (n === null && g !== null && f !== null) n = g - f;
-      if (f === null && g !== null && n !== null) f = g - n;
-      // Platform fee stored as positive magnitude (defensive for older staged payloads).
-      if (f !== null && f < 0) f = Math.abs(f);
-
-      // Transfer commission base: explicit TVT column, else net, else gross.
-      const transferAmount = transferTotalRaw ?? n ?? g ?? 0;
-      const cashAmount = p.amounts.dailyCash ?? 0;
-      const comm = computeCommissionComponents(drv, transferAmount, cashAmount);
-
-      const payoutDeduction = Math.abs(comm.transfer_commission) + Math.abs(comm.cash_commission);
-      const driverPayout = Math.max(0, Math.round((transferAmount - payoutDeduction) * 100) / 100);
-
-      toInsert.push({
-        driver_id: driverId,
-        trip_date: tripDateIso,
-        trip_count: p.amounts.tripCount,
-        gross: g,
-        fee: f,
-        // net_earnings: persist post–fleet-commission amount (transfer base minus full company_commission, incl. cash leg).
-        net: driverPayout,
-        total_transfer_earnings: transferTotalRaw,
-        daily_cash: p.amounts.dailyCash ?? null,
-        transfer_commission: comm.transfer_commission,
-        cash_commission: comm.cash_commission,
-        company_commission: comm.company_commission,
-        driver_payout: driverPayout,
-        commission_type: comm.commission_type,
-      });
-    }
-
-    const batch = 200;
-    for (let i = 0; i < toInsert.length; i += batch) {
-      const slice = toInsert.slice(i, i + batch);
-      const values: unknown[] = [];
-      const ph: string[] = [];
-      let p = 1;
-      for (const r of slice) {
-        ph.push(
-          `($${p++}::uuid, $${p++}::uuid, $${p++}, $${p++}::date, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`,
-        );
-        values.push(
-          importId,
-          r.driver_id,
-          platformEff,
-          r.trip_date,
-          r.trip_count,
-          r.gross,
-          r.fee,
-          r.net,
-          r.total_transfer_earnings,
-          r.daily_cash,
-          r.transfer_commission,
-          r.cash_commission,
-          r.company_commission,
-          r.driver_payout,
-          r.commission_type,
-        );
-      }
-      await client.query(
-        `INSERT INTO earnings_records (
-          import_id, driver_id, platform, trip_date, trip_count,
-          gross_earnings, platform_fee, net_earnings,
-          total_transfer_earnings, daily_cash, transfer_commission, cash_commission,
-          company_commission, driver_payout, commission_type
-        ) VALUES ${ph.join(",")}`,
-        values,
-      );
-    }
-
-    const totals = toInsert.reduce(
-      (acc, r) => {
-        acc.gross += r.gross ?? 0;
-        acc.fee += r.fee ?? 0;
-        acc.net += r.net ?? 0;
-        acc.comm += r.company_commission;
-        acc.payout += r.driver_payout;
-        acc.trips += r.trip_count ?? 1;
-        return acc;
-      },
-      { gross: 0, fee: 0, net: 0, comm: 0, payout: 0, trips: 0 },
-    );
-
-    await client.query(
-      `UPDATE earnings_imports SET
-        status = 'completed',
-        record_count = $2,
-        total_gross = $3,
-        total_trips = $4
-       WHERE id = $1`,
-      [importId, toInsert.length, totals.gross, totals.trips],
-    );
-
-    const byDriver = new Map<
-      string,
-      { gross: number; fee: number; net: number; comm: number; payout: number; dailyCash: number }
-    >();
-    for (const r of toInsert) {
-      const cur = byDriver.get(r.driver_id) ?? {
-        gross: 0,
-        fee: 0,
-        net: 0,
-        comm: 0,
-        payout: 0,
-        dailyCash: 0,
-      };
-      cur.gross += r.gross ?? 0;
-      cur.fee += r.fee ?? 0;
-      cur.net += r.net ?? 0;
-      cur.comm += r.company_commission;
-      cur.payout += r.driver_payout;
-      cur.dailyCash += r.daily_cash ?? 0;
-      byDriver.set(r.driver_id, cur);
-    }
-
-    for (const [driverId, agg] of byDriver) {
-      await client.query(
-        `INSERT INTO driver_payments (
-          organization_id, driver_id, payment_period_start, payment_period_end,
-          total_gross_earnings, total_platform_fees, total_net_earnings,
-          total_daily_cash,
-          company_commission, net_driver_payout, payment_status
-        ) VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10, 'pending')
-        ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
-        DO UPDATE SET
-          total_gross_earnings = COALESCE(driver_payments.total_gross_earnings, 0) + EXCLUDED.total_gross_earnings,
-          total_platform_fees = COALESCE(driver_payments.total_platform_fees, 0) + EXCLUDED.total_platform_fees,
-          total_net_earnings = COALESCE(driver_payments.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
-          total_daily_cash = COALESCE(driver_payments.total_daily_cash, 0) + EXCLUDED.total_daily_cash,
-          company_commission = COALESCE(driver_payments.company_commission, 0) + EXCLUDED.company_commission,
-          net_driver_payout = COALESCE(driver_payments.net_driver_payout, 0) + EXCLUDED.net_driver_payout`,
-        [
-          orgId,
-          driverId,
-          weekStartEff,
-          weekEndEff,
-          agg.gross,
-          agg.fee,
-          agg.net,
-          agg.dailyCash,
-          agg.comm,
-          agg.payout,
-        ],
-      );
-    }
-
-    await client.query(`DELETE FROM earnings_import_staging WHERE import_id = $1`, [importId]);
 
     await client.query("COMMIT");
 
     return res.json({
       importId,
-      insertedRows: toInsert.length,
-      skippedNoDriver,
-      skippedNoDate,
-      skippedNoMoney,
-      totals,
+      insertedRows: commitResult.insertedRows,
+      skippedNoDriver: commitResult.skippedNoDriver,
+      skippedNoDate: commitResult.skippedNoDate,
+      skippedNoMoney: commitResult.skippedNoMoney,
+      totals: commitResult.totals,
     });
   } catch (err) {
     try {

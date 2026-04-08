@@ -146,6 +146,7 @@ reg(
 reg(
   [
     "plata zilnica cu cash",
+    "plata zilnica cu cash com",
     "plata zilnica cash",
     "plata cash",
     "cash zilnic",
@@ -153,6 +154,16 @@ reg(
     "daily cash",
   ],
   "daily_cash",
+);
+
+reg(
+  [
+    "taxa deschidere cont",
+    "taxa deschidere de cont",
+    "comision deschidere cont",
+    "account opening fee",
+  ],
+  "account_opening_fee",
 );
 
 reg(

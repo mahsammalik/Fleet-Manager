@@ -24,6 +24,10 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-sm font-semibold text-slate-900 mb-3">Driver payout integrity (cash commission)</h3>
+      <p className="text-[11px] text-slate-500 mb-3">
+        Breakdown shows transfer base (TVT), account opening fee tracked separately (does not change payout math),
+        and commissions.
+      </p>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-xs">
           <thead className="bg-slate-50 text-slate-600">
@@ -31,6 +35,11 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
               <th className="px-2 py-2">Status</th>
               <th className="px-2 py-2">Date</th>
               <th className="px-2 py-2">Platform</th>
+              <th className="px-2 py-2 border-l-2 border-amber-200">TVT</th>
+              <th className="px-2 py-2 italic text-slate-500" title="Tracked separately; already in TVT">
+                Acct. fee
+              </th>
+              <th className="px-2 py-2">Tfr comm</th>
               <th className="px-2 py-2">Cash Commission</th>
               <th className="px-2 py-2">Driver Payout</th>
               <th className="px-2 py-2">Expected</th>
@@ -56,6 +65,15 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
                   </td>
                   <td className="px-2 py-2">{r.trip_date}</td>
                   <td className="px-2 py-2">{r.platform}</td>
+                  <td className="px-2 py-2 border-l-2 border-amber-100">
+                    {r.total_transfer_earnings != null ? formatCurrency(toNum(r.total_transfer_earnings)) : "—"}
+                  </td>
+                  <td className="px-2 py-2 italic text-slate-600">
+                    {r.account_opening_fee != null && toNum(r.account_opening_fee) > 0
+                      ? `−${formatCurrency(toNum(r.account_opening_fee))}`
+                      : "—"}
+                  </td>
+                  <td className="px-2 py-2">{formatCurrency(toNum(r.transfer_commission))}</td>
                   <td className="px-2 py-2">{formatCurrency(toNum(r.cash_commission))}</td>
                   <td className="px-2 py-2">{formatCurrency(payout)}</td>
                   <td className="px-2 py-2">{formatCurrency(expected)}</td>

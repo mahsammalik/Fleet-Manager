@@ -9,6 +9,8 @@ export interface EarningsPreviewRow {
   transferTotal: number | null;
   platformFee: number | null;
   dailyCash: number | null;
+  /** Positive magnitude from CSV (e.g. -71.44); tracking only */
+  accountOpeningFee: number | null;
   tripCount: number | null;
   matchMethod: string;
   driverMatched: boolean;

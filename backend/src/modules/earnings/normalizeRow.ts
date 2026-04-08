@@ -8,6 +8,7 @@ export type CanonicalField =
   | "net"
   | "transfer_total"
   | "daily_cash"
+  | "account_opening_fee"
   | "trips";
 
 export interface RowHints {
@@ -23,10 +24,20 @@ export interface NormalizedAmounts {
   /** Total Venituri de transferat (TVT); commission transfer base when present. */
   transferTotal: number | null;
   dailyCash: number | null;
+  /** Magnitude only; CSV may show negative (e.g. -71.44). */
+  accountOpeningFee: number | null;
   tripCount: number | null;
 }
 
 export interface NormalizedEarningsRow {
+  tripDateIso: string | null;
+  hints: RowHints;
+  amounts: NormalizedAmounts;
+  rawSample: Record<string, string>;
+}
+
+/** Persisted in earnings_import_staging.payload */
+export interface EarningsStagingPayload {
   tripDateIso: string | null;
   hints: RowHints;
   amounts: NormalizedAmounts;
@@ -93,6 +104,7 @@ export function rowCellsToNormalized(
     platformFee: null,
     transferTotal: null,
     dailyCash: null,
+    accountOpeningFee: null,
     tripCount: null,
   };
   const rawSample: Record<string, string> = {};
@@ -133,6 +145,11 @@ export function rowCellsToNormalized(
       case "daily_cash":
         amounts.dailyCash = parseRoNumber(raw);
         break;
+      case "account_opening_fee": {
+        const v = parseRoNumber(raw);
+        amounts.accountOpeningFee = v === null ? null : Math.abs(v);
+        break;
+      }
       case "trips":
         amounts.tripCount = parseRoNumber(raw);
         if (amounts.tripCount !== null) amounts.tripCount = Math.round(amounts.tripCount);

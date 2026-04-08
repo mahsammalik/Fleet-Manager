@@ -296,6 +296,12 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                     <th className="py-2 pr-2 font-medium" title="Plată zilnică cu cash">
                       Cash
                     </th>
+                    <th
+                      className="py-2 pr-2 font-medium border-l-2 border-amber-200 pl-3 italic text-slate-600"
+                      title="Taxa deschidere cont — tracked separately; already included in TVT; does not change payout"
+                    >
+                      Acct. fee
+                    </th>
                     <th className="py-2 pr-2 font-medium">Match</th>
                     <th className="py-2 pr-2 font-medium">Driver</th>
                   </tr>
@@ -314,6 +320,11 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                       <td className="py-1.5 pr-2">
                         {r.dailyCash != null ? formatCurrency(r.dailyCash) : "—"}
                       </td>
+                      <td className="py-1.5 pr-2 border-l-2 border-amber-100 pl-3 italic text-slate-600">
+                        {r.accountOpeningFee != null && r.accountOpeningFee > 0
+                          ? `−${formatCurrency(r.accountOpeningFee)}`
+                          : "—"}
+                      </td>
                       <td className="py-1.5 pr-2 text-slate-600">{MATCH_LABEL[r.matchMethod] ?? r.matchMethod}</td>
                       <td className="py-1.5 pr-2">
                         {r.driverMatched ? (
@@ -326,6 +337,10 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                   ))}
                 </tbody>
               </table>
+              <p className="text-[11px] text-slate-500 mt-2 italic">
+                Acct. fee: &quot;Taxa deschidere cont&quot; stored for reporting only (absolute value). TVT is already
+                net of this fee — payout formula unchanged.
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-2">

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "ts-node-dev --respawn -- src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "import-earnings-csv": "ts-node --transpile-only scripts/import-earnings-csv.ts"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +18,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
+    "fast-csv": "^5.0.5",
     "fast-xml-parser": "^5.5.10",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",

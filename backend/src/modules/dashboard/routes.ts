@@ -224,6 +224,9 @@ router.get("/earnings/payout-integrity", async (req, res) => {
       net_earnings: string | null;
       driver_payout: string | null;
       cash_commission: string | null;
+      total_transfer_earnings: string | null;
+      account_opening_fee: string | null;
+      transfer_commission: string | null;
       expected_payout: string | null;
       ok: boolean;
     }>(
@@ -235,6 +238,9 @@ router.get("/earnings/payout-integrity", async (req, res) => {
          er.net_earnings::text,
          er.driver_payout::text,
          er.cash_commission::text,
+         er.total_transfer_earnings::text AS total_transfer_earnings,
+         er.account_opening_fee::text AS account_opening_fee,
+         er.transfer_commission::text AS transfer_commission,
          GREATEST(
            0,
            ROUND(

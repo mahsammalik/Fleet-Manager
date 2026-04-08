@@ -47,6 +47,10 @@ export interface PayoutIntegrityRow {
   net_earnings: string | null;
   driver_payout: string | null;
   cash_commission: string | null;
+  total_transfer_earnings: string | null;
+  /** Positive magnitude; informational-only, already in TVT */
+  account_opening_fee: string | null;
+  transfer_commission: string | null;
   expected_payout: string | null;
   ok: boolean;
 }

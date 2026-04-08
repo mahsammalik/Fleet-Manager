@@ -164,6 +164,7 @@ CREATE TABLE IF NOT EXISTS earnings_records (
     net_earnings DECIMAL(10, 2),
     total_transfer_earnings DECIMAL(10, 2),
     daily_cash DECIMAL(10, 2),
+    account_opening_fee DECIMAL(10, 2),
     transfer_commission DECIMAL(10, 2),
     cash_commission DECIMAL(10, 2),
     has_cash_commission BOOLEAN GENERATED ALWAYS AS (COALESCE(cash_commission, 0) < 0) STORED,
