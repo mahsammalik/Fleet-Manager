@@ -581,4 +581,117 @@ router.delete("/earnings/import/:id", async (req, res) => {
   }
 });
 
+router.put("/earnings/payouts/:id/recalculate", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  const { id } = req.params;
+  try {
+    const result = await pool.query<{
+      id: string;
+      driver_payout: string | null;
+      net_earnings: string | null;
+      cash_commission: string | null;
+      company_commission: string | null;
+    }>(
+      `UPDATE earnings_records er
+       SET
+         driver_payout = GREATEST(
+           0,
+           ROUND(
+             (
+               COALESCE(
+                 er.total_transfer_earnings,
+                 er.net_earnings,
+                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                 er.gross_earnings,
+                 0
+               ) - COALESCE(er.company_commission, 0)
+             )::numeric,
+             2
+           )
+         ),
+         net_earnings = GREATEST(
+           0,
+           ROUND(
+             (
+               COALESCE(
+                 er.total_transfer_earnings,
+                 er.net_earnings,
+                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                 er.gross_earnings,
+                 0
+               ) - COALESCE(er.company_commission, 0)
+             )::numeric,
+             2
+           )
+         )
+       FROM earnings_imports ei
+       WHERE er.import_id = ei.id
+         AND ei.organization_id = $1
+         AND er.id = $2::uuid
+       RETURNING er.id, er.driver_payout::text, er.net_earnings::text, er.cash_commission::text, er.company_commission::text`,
+      [orgId, id],
+    );
+    if (!result.rowCount) return res.status(404).json({ message: "Payout record not found" });
+    return res.json({ updated: true, row: result.rows[0] });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Recalculate payout by id error", err);
+    return res.status(500).json({ message: "Failed to recalculate payout" });
+  }
+});
+
+router.post("/earnings/payouts/recalculate-bulk", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  const onlyCash = (req.body as { onlyCashCommission?: boolean } | undefined)?.onlyCashCommission ?? true;
+  try {
+    const result = await pool.query<{ id: string }>(
+      `UPDATE earnings_records er
+       SET
+         driver_payout = GREATEST(
+           0,
+           ROUND(
+             (
+               COALESCE(
+                 er.total_transfer_earnings,
+                 er.net_earnings,
+                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                 er.gross_earnings,
+                 0
+               ) - COALESCE(er.company_commission, 0)
+             )::numeric,
+             2
+           )
+         ),
+         net_earnings = GREATEST(
+           0,
+           ROUND(
+             (
+               COALESCE(
+                 er.total_transfer_earnings,
+                 er.net_earnings,
+                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                 er.gross_earnings,
+                 0
+               ) - COALESCE(er.company_commission, 0)
+             )::numeric,
+             2
+           )
+         )
+       FROM earnings_imports ei
+       WHERE er.import_id = ei.id
+         AND ei.organization_id = $1
+         AND ($2::boolean = false OR COALESCE(er.cash_commission, 0) < 0)
+       RETURNING er.id`,
+      [orgId, onlyCash],
+    );
+    return res.json({ updatedRows: result.rowCount ?? 0 });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Bulk recalculate payouts error", err);
+    return res.status(500).json({ message: "Failed to bulk recalculate payouts" });
+  }
+});
+
 export const earningsImportRoutes = router;

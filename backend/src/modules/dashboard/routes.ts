@@ -210,4 +210,78 @@ router.get("/activity", async (req, res) => {
   }
 });
 
+router.get("/earnings/payout-integrity", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  try {
+    const { rows } = await query<{
+      id: string;
+      driver_id: string;
+      trip_date: string;
+      platform: string;
+      net_earnings: string | null;
+      driver_payout: string | null;
+      cash_commission: string | null;
+      expected_payout: string | null;
+      ok: boolean;
+    }>(
+      `SELECT
+         er.id::text,
+         er.driver_id::text,
+         er.trip_date::text,
+         er.platform,
+         er.net_earnings::text,
+         er.driver_payout::text,
+         er.cash_commission::text,
+         GREATEST(
+           0,
+           ROUND(
+             (
+               COALESCE(
+                 er.total_transfer_earnings,
+                 er.net_earnings,
+                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                 er.gross_earnings,
+                 0
+               ) - COALESCE(er.company_commission, 0)
+             )::numeric,
+             2
+           )
+         )::text AS expected_payout,
+         (
+           COALESCE(er.driver_payout, 0)::numeric(12, 2) =
+           GREATEST(
+             0,
+             ROUND(
+               (
+                 COALESCE(
+                   er.total_transfer_earnings,
+                   er.net_earnings,
+                   COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                   er.gross_earnings,
+                   0
+                 ) - COALESCE(er.company_commission, 0)
+               )::numeric,
+               2
+             )
+           )::numeric(12, 2)
+         ) AS ok
+       FROM earnings_records er
+       JOIN earnings_imports ei ON ei.id = er.import_id
+       WHERE ei.organization_id = $1
+         AND COALESCE(er.cash_commission, 0) <> 0
+       ORDER BY er.trip_date DESC, er.created_at DESC
+       LIMIT 100`,
+      [orgId],
+    );
+    return res.json(rows);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Payout integrity dashboard error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 export const dashboardRoutes = router;

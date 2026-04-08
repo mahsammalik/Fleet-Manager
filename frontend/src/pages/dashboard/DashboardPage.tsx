@@ -8,6 +8,7 @@ import {
   getMonthlyEarnings,
   getDocumentStats,
   getRecentActivity,
+  getPayoutIntegrityRows,
 } from "../../api/dashboard";
 import type { DashboardActivityItem } from "../../api/dashboard";
 import { AnalyticsCard } from "../../components/dashboard/AnalyticsCard";
@@ -17,6 +18,7 @@ import { DriverStatusChart } from "../../components/dashboard/DriverStatusChart"
 import { EarningsChart } from "../../components/dashboard/EarningsChart";
 import { EarningsImportModal } from "../../components/dashboard/EarningsImportModal";
 import { DocumentStatsChart } from "../../components/dashboard/DocumentStatsChart";
+import { DriverPayoutTable } from "../../components/dashboard/DriverPayoutTable";
 import { formatCurrency } from "../../utils/currency";
 
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -113,12 +115,17 @@ export function DashboardPage() {
   const earningsQuery = useQuery({ queryKey: ["dashboard", "earnings"], queryFn: () => getMonthlyEarnings() });
   const docsQuery = useQuery({ queryKey: ["dashboard", "documents"], queryFn: () => getDocumentStats() });
   const activityQuery = useQuery({ queryKey: ["dashboard", "activity"], queryFn: () => getRecentActivity() });
+  const payoutIntegrityQuery = useQuery({
+    queryKey: ["dashboard", "payout-integrity"],
+    queryFn: () => getPayoutIntegrityRows(),
+  });
 
   const stats = statsQuery.data?.data;
   const statusData = statusQuery.data?.data ?? [];
   const earningsData = earningsQuery.data?.data ?? [];
   const docsData = docsQuery.data?.data ?? [];
   const activities = activityQuery.data?.data ?? [];
+  const payoutIntegrityRows = payoutIntegrityQuery.data?.data ?? [];
 
   const isLoading = statsQuery.isLoading || statusQuery.isLoading;
   const isError = statsQuery.isError || statusQuery.isError;
@@ -247,6 +254,13 @@ export function DashboardPage() {
                 </button>
               </div>
               <EarningsImportModal open={earningsImportOpen} onClose={() => setEarningsImportOpen(false)} />
+            </section>
+          )}
+
+          {canImportEarnings && (
+            <section className="mb-8">
+              <h2 className="text-sm font-semibold text-slate-700 mb-4">Payout fix status</h2>
+              <DriverPayoutTable rows={payoutIntegrityRows} />
             </section>
           )}
 

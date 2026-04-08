@@ -39,6 +39,18 @@ export interface DashboardActivityItem {
   created_at: string;
 }
 
+export interface PayoutIntegrityRow {
+  id: string;
+  driver_id: string;
+  trip_date: string;
+  platform: string;
+  net_earnings: string | null;
+  driver_payout: string | null;
+  cash_commission: string | null;
+  expected_payout: string | null;
+  ok: boolean;
+}
+
 export function getDashboardStats() {
   return api.get<DashboardStats>("/dashboard/stats");
 }
@@ -57,4 +69,8 @@ export function getDocumentStats() {
 
 export function getRecentActivity() {
   return api.get<DashboardActivityItem[]>("/dashboard/activity");
+}
+
+export function getPayoutIntegrityRows() {
+  return api.get<PayoutIntegrityRow[]>("/dashboard/earnings/payout-integrity");
 }

@@ -166,8 +166,27 @@ CREATE TABLE IF NOT EXISTS earnings_records (
     daily_cash DECIMAL(10, 2),
     transfer_commission DECIMAL(10, 2),
     cash_commission DECIMAL(10, 2),
+    has_cash_commission BOOLEAN GENERATED ALWAYS AS (COALESCE(cash_commission, 0) < 0) STORED,
     company_commission DECIMAL(10, 2),
     driver_payout DECIMAL(10, 2),
+    driver_payout_after_cash DECIMAL(10, 2)
+      GENERATED ALWAYS AS (
+        GREATEST(
+          0,
+          ROUND(
+            (
+              COALESCE(
+                total_transfer_earnings,
+                net_earnings,
+                COALESCE(gross_earnings, 0) - COALESCE(platform_fee, 0),
+                gross_earnings,
+                0
+              ) - COALESCE(company_commission, 0)
+            )::numeric,
+            2
+          )
+        )
+      ) STORED,
     commission_type VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -354,5 +373,38 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_documents_type ON vehicle_documents(docum
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_expiry ON vehicle_documents(expiry_date);
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_verified ON vehicle_documents(is_verified);
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_organization ON vehicle_documents(organization_id);
+
+-- Earnings payout guardrail: always deduct full company commission (incl. cash commission).
+CREATE OR REPLACE FUNCTION trg_enforce_driver_payout_after_cash()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  transfer_base numeric;
+BEGIN
+  transfer_base := COALESCE(
+    NEW.total_transfer_earnings,
+    NEW.net_earnings,
+    COALESCE(NEW.gross_earnings, 0) - COALESCE(NEW.platform_fee, 0),
+    NEW.gross_earnings,
+    0
+  );
+
+  NEW.driver_payout := GREATEST(
+    0,
+    ROUND((transfer_base - COALESCE(NEW.company_commission, 0))::numeric, 2)
+  );
+  NEW.net_earnings := NEW.driver_payout;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_earnings_records_payout_after_cash ON earnings_records;
+CREATE TRIGGER trg_earnings_records_payout_after_cash
+BEFORE INSERT OR UPDATE OF
+  total_transfer_earnings, net_earnings, gross_earnings, platform_fee, company_commission
+ON earnings_records
+FOR EACH ROW
+EXECUTE FUNCTION trg_enforce_driver_payout_after_cash();
 
 COMMIT;
