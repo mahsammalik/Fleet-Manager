@@ -7,7 +7,7 @@ import { documentRoutes } from "./modules/documents/routes";
 import { dashboardRoutes } from "./modules/dashboard/routes";
 import { vehicleRoutes } from "./modules/vehicles/routes";
 import { vehicleDocumentRoutes } from "./modules/vehicleDocuments/routes";
-import { earningsImportRoutes } from "./modules/earnings/routes";
+import { earningsRoutes } from "./modules/earnings/routes";
 import { importEarningsCsvRoutes } from "./modules/import/earningsCsvRoutes";
 
 export const app = express();
@@ -28,7 +28,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/drivers", documentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/dashboard", earningsImportRoutes);
+app.use("/api/earnings", earningsRoutes);
 app.use("/api/import", importEarningsCsvRoutes);
 app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/vehicles", vehicleDocumentRoutes);

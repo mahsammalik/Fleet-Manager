@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useAuthStore } from "../../store/authStore";
 import {
@@ -8,6 +8,7 @@ import {
   cancelEarningsImport,
   type EarningsPreviewResponse,
 } from "../../api/earningsImport";
+import { getEarningsImports } from "../../api/earnings";
 import { formatCurrency } from "../../utils/currency";
 
 const PROVIDER_OPTIONS = [
@@ -36,7 +37,6 @@ function localIsoDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Rolling window: local yesterday minus 7 calendar days through local yesterday. */
 function weeklyDefaultRange(): { start: string; end: string } {
   const ref = new Date();
   const end = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
@@ -55,15 +55,11 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : "Something went wrong";
 }
 
-export type EarningsImportModalProps = {
-  open: boolean;
-  onClose: () => void;
-};
-
-export function EarningsImportModal({ open, onClose }: EarningsImportModalProps) {
+export function EarningsImportPage() {
   const user = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
-  const canImport = user?.role === "admin" || user?.role === "accountant";
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   const [preview, setPreview] = useState<EarningsPreviewResponse | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -72,21 +68,20 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
   const [periodEnd, setPeriodEnd] = useState("");
 
   useEffect(() => {
-    if (!open) {
-      setPreview(null);
-      setLocalError(null);
-      return;
-    }
     const { start, end } = weeklyDefaultRange();
     setPeriodStart(start);
     setPeriodEnd(end);
-  }, [open]);
+  }, []);
 
   useEffect(() => {
-    if (preview) {
-      setSelectedPlatform(preview.platform);
-    }
+    if (preview) setSelectedPlatform(preview.platform);
   }, [preview?.importId]);
+
+  const importsQuery = useQuery({
+    queryKey: ["earnings", "imports"],
+    queryFn: () => getEarningsImports(1, 15).then((r) => r.data),
+    enabled: user?.role === "admin" || user?.role === "accountant",
+  });
 
   const previewMut = useMutation({
     mutationFn: (file: File) => previewEarningsImport(file),
@@ -110,7 +105,6 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
     onSuccess: () => {
       setPreview(null);
       setLocalError(null);
-      onClose();
       void queryClient.invalidateQueries({ queryKey: ["earnings"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
     },
@@ -122,13 +116,27 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
     onSuccess: () => {
       setPreview(null);
       setLocalError(null);
+      void queryClient.invalidateQueries({ queryKey: ["earnings", "imports"] });
     },
     onError: (e) => setLocalError(errMessage(e)),
   });
 
-  if (!open || !canImport) {
-    return null;
-  }
+  const handleFile = useCallback(
+    (file: File | undefined) => {
+      if (file) previewMut.mutate(file);
+    },
+    [previewMut],
+  );
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragActive(false);
+      const f = e.dataTransfer.files?.[0];
+      handleFile(f);
+    },
+    [handleFile],
+  );
 
   const busy = previewMut.isPending || commitMut.isPending || cancelMut.isPending;
   const confidencePct =
@@ -136,65 +144,74 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
   const periodValid =
     Boolean(periodStart && periodEnd && periodStart <= periodEnd && PROVIDER_OPTIONS.some((o) => o.value === selectedPlatform));
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto my-8">
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <h3 className="text-lg font-semibold text-slate-900">Import earnings</h3>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              if (preview?.importId) {
-                void cancelMut.mutateAsync(preview.importId).finally(() => onClose());
-              } else {
-                onClose();
-              }
-            }}
-            className="text-slate-400 hover:text-slate-600 text-sm disabled:opacity-50"
-          >
-            Close
-          </button>
-        </div>
+  if (user?.role !== "admin" && user?.role !== "accountant") {
+    return <p className="p-6 text-slate-600">You do not have access to earnings import.</p>;
+  }
 
-        <p className="text-xs text-slate-600 mb-4">
-          Upload platform reports: CSV, XLSX, ZIP, XML, or PDF. After preview, adjust provider and pay period if
-          needed, then confirm import.
+  return (
+    <div className="flex flex-col flex-1 overflow-auto">
+      <header className="shrink-0 border-b border-slate-200 bg-white/80 backdrop-blur-md px-4 sm:px-6 py-4">
+        <h1 className="text-lg font-semibold text-slate-900">Import earnings</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Drag a file onto the zone or browse. CSV, XLSX, ZIP, XML, or PDF.
         </p>
+      </header>
+
+      <div className="flex-1 p-4 sm:p-6 space-y-8 max-w-4xl mx-auto w-full">
+        {localError && (
+          <div className="rounded-xl bg-red-50 text-red-800 text-sm px-4 py-3 border border-red-100">{localError}</div>
+        )}
 
         {!preview && (
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-              <span className="rounded-lg border border-slate-300 px-3 py-1.5 bg-slate-50 hover:bg-slate-100">
-                Choose file
-              </span>
-              <input
-                type="file"
-                accept=".csv,.xlsx,.xls,.zip,.xml,.pdf"
-                className="hidden"
-                disabled={busy}
-                onChange={(ev) => {
-                  const f = ev.target.files?.[0];
-                  ev.target.value = "";
-                  if (f) previewMut.mutate(f);
-                }}
-              />
-            </label>
+          <div
+            onDragEnter={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={onDrop}
+            className={`
+              rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-colors cursor-pointer
+              ${dragActive ? "border-sky-500 bg-sky-50/80" : "border-slate-300 bg-white/60 hover:border-slate-400"}
+              shadow-[0_8px_30px_rgb(0,0,0,0.06)] backdrop-blur-sm
+            `}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
+            }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls,.zip,.xml,.pdf"
+              className="hidden"
+              onChange={(ev) => {
+                const f = ev.target.files?.[0];
+                ev.target.value = "";
+                handleFile(f);
+              }}
+            />
+            <p className="text-slate-700 font-medium">Drop file here or click to browse</p>
+            <p className="text-xs text-slate-500 mt-2">Max size per server limits (earnings uploads)</p>
             {previewMut.isPending && (
-              <span className="text-sm text-slate-500 flex items-center gap-2">
-                <span className="inline-block h-4 w-4 rounded-full border-2 border-sky-500 border-t-transparent animate-spin" />
-                Parsing file…
-              </span>
+              <div className="mt-4 max-w-xs mx-auto">
+                <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                  <div className="h-full w-1/2 bg-sky-500 rounded-full animate-pulse" style={{ width: "40%" }} />
+                </div>
+                <p className="text-xs text-slate-500 mt-2">Parsing…</p>
+              </div>
             )}
           </div>
         )}
 
-        {localError && (
-          <div className="mb-3 rounded-lg bg-red-50 text-red-800 text-sm px-3 py-2">{localError}</div>
-        )}
-
         {preview && (
-          <div className="space-y-4 border-t border-slate-100 pt-4">
+          <div className="rounded-2xl border border-white/30 bg-white/70 backdrop-blur-md shadow-lg p-4 sm:p-6 space-y-4">
             <div className="text-sm text-slate-700">
               <span className="text-slate-500">Detected:</span>{" "}
               <span className="font-medium text-slate-900">
@@ -205,12 +222,12 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label htmlFor="earnings-provider" className="block text-xs font-medium text-slate-700 mb-1">
+                <label htmlFor="import-provider" className="block text-xs font-medium text-slate-700 mb-1">
                   Provider
                 </label>
                 <select
-                  id="earnings-provider"
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  id="import-provider"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm min-h-[44px]"
                   value={selectedPlatform}
                   disabled={busy}
                   onChange={(e) => setSelectedPlatform(e.target.value)}
@@ -224,26 +241,26 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
               </div>
               <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="earnings-period-start" className="block text-xs font-medium text-slate-700 mb-1">
+                  <label htmlFor="import-start" className="block text-xs font-medium text-slate-700 mb-1">
                     Period start
                   </label>
                   <input
-                    id="earnings-period-start"
+                    id="import-start"
                     type="date"
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm min-h-[44px]"
                     value={periodStart}
                     disabled={busy}
                     onChange={(e) => setPeriodStart(e.target.value)}
                   />
                 </div>
                 <div>
-                  <label htmlFor="earnings-period-end" className="block text-xs font-medium text-slate-700 mb-1">
+                  <label htmlFor="import-end" className="block text-xs font-medium text-slate-700 mb-1">
                     Period end
                   </label>
                   <input
-                    id="earnings-period-end"
+                    id="import-end"
                     type="date"
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm min-h-[44px]"
                     value={periodEnd}
                     disabled={busy}
                     onChange={(e) => setPeriodEnd(e.target.value)}
@@ -262,15 +279,15 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                 <span className="font-medium text-slate-900">{preview.totalRows}</span>
               </div>
               <div>
-                <span className="text-slate-500">Driver match rate</span>{" "}
+                <span className="text-slate-500">Match</span>{" "}
                 <span className="font-medium text-sky-700">
-                  {(preview.matchRate * 100).toFixed(1)}% ({preview.matchedPreviewCount} / {preview.totalRows})
+                  {(preview.matchRate * 100).toFixed(1)}%
                 </span>
               </div>
             </div>
 
             {preview.warnings.length > 0 && (
-              <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+              <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2">
                 <p className="text-xs font-semibold text-amber-900 mb-1">Data quality</p>
                 <ul className="text-xs text-amber-900 list-disc list-inside space-y-0.5">
                   {preview.warnings.map((w, i) => (
@@ -280,8 +297,8 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
               </div>
             )}
 
-            <div className="overflow-x-auto">
-              <p className="text-xs font-semibold text-slate-700 mb-2">Preview (first 10 rows)</p>
+            <div className="overflow-x-auto -mx-2">
+              <p className="text-xs font-semibold text-slate-700 mb-2 px-2">Preview (first 10 rows)</p>
               <table className="min-w-full text-xs text-left border-collapse">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
@@ -289,19 +306,10 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                     <th className="py-2 pr-2 font-medium">Date</th>
                     <th className="py-2 pr-2 font-medium">Gross</th>
                     <th className="py-2 pr-2 font-medium">Net</th>
-                    <th className="py-2 pr-2 font-medium" title="Total Venituri de transferat">
-                      TVT
-                    </th>
+                    <th className="py-2 pr-2 font-medium">TVT</th>
                     <th className="py-2 pr-2 font-medium">Fee</th>
-                    <th className="py-2 pr-2 font-medium" title="Plată zilnică cu cash">
-                      Cash
-                    </th>
-                    <th
-                      className="py-2 pr-2 font-medium border-l-2 border-amber-200 pl-3 italic text-slate-600"
-                      title="Taxa deschidere cont — tracked separately; already included in TVT; does not change payout"
-                    >
-                      Acct. fee
-                    </th>
+                    <th className="py-2 pr-2 font-medium">Cash</th>
+                    <th className="py-2 pr-2 font-medium border-l-2 border-amber-200">Acct. fee</th>
                     <th className="py-2 pr-2 font-medium">Match</th>
                     <th className="py-2 pr-2 font-medium">Driver</th>
                   </tr>
@@ -310,17 +318,13 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                   {preview.previewRows.map((r) => (
                     <tr key={r.rowIndex} className="border-b border-slate-100">
                       <td className="py-1.5 pr-2 text-slate-600">{r.rowIndex + 1}</td>
-                      <td className="py-1.5 pr-2 text-slate-800">{r.tripDate ?? "—"}</td>
+                      <td className="py-1.5 pr-2">{r.tripDate ?? "—"}</td>
                       <td className="py-1.5 pr-2">{r.gross != null ? formatCurrency(r.gross) : "—"}</td>
                       <td className="py-1.5 pr-2">{r.net != null ? formatCurrency(r.net) : "—"}</td>
-                      <td className="py-1.5 pr-2">
-                        {r.transferTotal != null ? formatCurrency(r.transferTotal) : "—"}
-                      </td>
+                      <td className="py-1.5 pr-2">{r.transferTotal != null ? formatCurrency(r.transferTotal) : "—"}</td>
                       <td className="py-1.5 pr-2">{r.platformFee != null ? formatCurrency(r.platformFee) : "—"}</td>
-                      <td className="py-1.5 pr-2">
-                        {r.dailyCash != null ? formatCurrency(r.dailyCash) : "—"}
-                      </td>
-                      <td className="py-1.5 pr-2 border-l-2 border-amber-100 pl-3 italic text-slate-600">
+                      <td className="py-1.5 pr-2">{r.dailyCash != null ? formatCurrency(r.dailyCash) : "—"}</td>
+                      <td className="py-1.5 pr-2 border-l-2 border-amber-100 italic text-slate-600">
                         {r.accountOpeningFee != null && r.accountOpeningFee > 0
                           ? `−${formatCurrency(r.accountOpeningFee)}`
                           : "—"}
@@ -337,10 +341,6 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                   ))}
                 </tbody>
               </table>
-              <p className="text-[11px] text-slate-500 mt-2 italic">
-                Acct. fee: &quot;Taxa deschidere cont&quot; stored for reporting only (absolute value). TVT is already
-                net of this fee — payout formula unchanged.
-              </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -355,7 +355,7 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                     weekEnd: periodEnd,
                   })
                 }
-                className="rounded-lg bg-sky-600 text-white text-sm font-medium px-4 py-2 hover:bg-sky-700 disabled:opacity-50"
+                className="rounded-lg bg-sky-600 text-white text-sm font-medium px-4 py-2.5 min-h-[44px] hover:bg-sky-700 disabled:opacity-50"
               >
                 {commitMut.isPending ? "Importing…" : "Confirm import"}
               </button>
@@ -363,19 +363,63 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                 type="button"
                 disabled={busy}
                 onClick={() => cancelMut.mutate(preview.importId)}
-                className="rounded-lg border border-slate-300 text-slate-700 text-sm font-medium px-4 py-2 hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-lg border border-slate-300 text-slate-700 text-sm font-medium px-4 py-2.5 min-h-[44px] hover:bg-slate-50 disabled:opacity-50"
               >
-                Cancel
+                Cancel preview
               </button>
             </div>
-            <p className="text-xs text-slate-500">
-              Rows without a date in the file use the period end as trip date. Only rows with a matched driver and a
-              gross, net, or TVT amount are written. Transfer commission uses TVT when the column is present, otherwise
-              net; cash commission uses daily cash when present. Totals roll into pending driver payments for the period
-              above.
-            </p>
           </div>
         )}
+
+        <section>
+          <h2 className="text-sm font-semibold text-slate-800 mb-3">Recent imports</h2>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200/80 bg-white/60 backdrop-blur-sm shadow-sm">
+            {importsQuery.isLoading ? (
+              <p className="p-4 text-sm text-slate-500">Loading…</p>
+            ) : (
+              <table className="min-w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wide">
+                  <tr>
+                    <th className="px-3 py-2">File</th>
+                    <th className="px-3 py-2">Platform</th>
+                    <th className="px-3 py-2">Period</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Rows</th>
+                    <th className="px-3 py-2">Created</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(importsQuery.data?.items ?? []).map((row) => (
+                    <tr key={row.id} className="text-slate-800">
+                      <td className="px-3 py-2 max-w-[180px] truncate">{row.file_name ?? "—"}</td>
+                      <td className="px-3 py-2">{row.platform}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">
+                        {row.week_start?.slice(0, 10)} – {row.week_end?.slice(0, 10)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                            row.status === "completed"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : row.status === "preview"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">{row.record_count ?? "—"}</td>
+                      <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
+                        {row.created_at?.slice(0, 19).replace("T", " ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

@@ -57,13 +57,13 @@ router.get("/stats", async (req, res) => {
       ),
       query<{ total: string | null }>(
         `SELECT COALESCE(SUM(company_commission), 0)::text as total
-         FROM driver_payments
+         FROM driver_payouts
          WHERE organization_id = $1 AND payment_status IN ('paid', 'approved')`,
         [orgId],
       ),
       query<{ total: string | null }>(
         `SELECT COALESCE(SUM(net_driver_payout), 0)::text as total
-         FROM driver_payments
+         FROM driver_payouts
          WHERE organization_id = $1 AND payment_status = 'pending'`,
         [orgId],
       ),
@@ -121,41 +121,6 @@ router.get("/drivers/status", async (req, res) => {
   }
 });
 
-router.get("/earnings/monthly", async (req, res) => {
-  const orgId = req.user?.orgId;
-  if (!orgId) {
-    return res.status(400).json({ message: "User is not associated with an organization" });
-  }
-  try {
-    const { rows } = await query<{ m: Date | string; total: string | null; commission: string | null }>(
-      `SELECT date_trunc('month', er.trip_date AT TIME ZONE 'UTC') AS m,
-              SUM(COALESCE(er.gross_earnings, 0))::text AS total,
-              SUM(COALESCE(er.company_commission, 0))::text AS commission
-       FROM earnings_records er
-       INNER JOIN drivers d ON er.driver_id = d.id
-       WHERE d.organization_id = $1
-       GROUP BY 1
-       ORDER BY 1 ASC`,
-      [orgId],
-    );
-    return res.json(
-      rows.map((r) => {
-        const monthDate = r.m instanceof Date ? r.m : new Date(r.m);
-        const label = monthDate.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
-        return {
-          month: label,
-          totalEarnings: parseFloat(r.total ?? "0"),
-          totalCommission: parseFloat(r.commission ?? "0"),
-        };
-      }),
-    );
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("Dashboard earnings monthly error", err);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-});
-
 router.get("/documents", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) {
@@ -206,86 +171,6 @@ router.get("/activity", async (req, res) => {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("Dashboard activity error", err);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-router.get("/earnings/payout-integrity", async (req, res) => {
-  const orgId = req.user?.orgId;
-  if (!orgId) {
-    return res.status(400).json({ message: "User is not associated with an organization" });
-  }
-  try {
-    const { rows } = await query<{
-      id: string;
-      driver_id: string;
-      trip_date: string;
-      platform: string;
-      net_earnings: string | null;
-      driver_payout: string | null;
-      cash_commission: string | null;
-      total_transfer_earnings: string | null;
-      account_opening_fee: string | null;
-      transfer_commission: string | null;
-      expected_payout: string | null;
-      ok: boolean;
-    }>(
-      `SELECT
-         er.id::text,
-         er.driver_id::text,
-         er.trip_date::text,
-         er.platform,
-         er.net_earnings::text,
-         er.driver_payout::text,
-         er.cash_commission::text,
-         er.total_transfer_earnings::text AS total_transfer_earnings,
-         er.account_opening_fee::text AS account_opening_fee,
-         er.transfer_commission::text AS transfer_commission,
-         GREATEST(
-           0,
-           ROUND(
-             (
-               COALESCE(
-                 er.total_transfer_earnings,
-                 er.net_earnings,
-                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                 er.gross_earnings,
-                 0
-               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
-             )::numeric,
-             2
-           )
-         )::text AS expected_payout,
-         (
-           COALESCE(er.driver_payout, 0)::numeric(12, 2) =
-           GREATEST(
-             0,
-             ROUND(
-               (
-                 COALESCE(
-                   er.total_transfer_earnings,
-                   er.net_earnings,
-                   COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                   er.gross_earnings,
-                   0
-                 ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
-               )::numeric,
-               2
-             )
-           )::numeric(12, 2)
-         ) AS ok
-       FROM earnings_records er
-       JOIN earnings_imports ei ON ei.id = er.import_id
-       WHERE ei.organization_id = $1
-         AND COALESCE(er.cash_commission, 0) <> 0
-       ORDER BY er.trip_date DESC, er.created_at DESC
-       LIMIT 100`,
-      [orgId],
-    );
-    return res.json(rows);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("Payout integrity dashboard error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });

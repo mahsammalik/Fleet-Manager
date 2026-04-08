@@ -55,7 +55,7 @@ export interface EarningsCommitResponse {
 export function previewEarningsImport(file: File) {
   const fd = new FormData();
   fd.append("file", file);
-  return api.post<EarningsPreviewResponse>("/dashboard/earnings/import/preview", fd);
+  return api.post<EarningsPreviewResponse>("/earnings/import/preview", fd);
 }
 
 export type EarningsCommitOptions = {
@@ -65,12 +65,12 @@ export type EarningsCommitOptions = {
 };
 
 export function commitEarningsImport(importId: string, opts?: EarningsCommitOptions) {
-  return api.post<EarningsCommitResponse>("/dashboard/earnings/import/commit", {
+  return api.post<EarningsCommitResponse>("/earnings/import/commit", {
     importId,
     ...opts,
   });
 }
 
 export function cancelEarningsImport(importId: string) {
-  return api.delete(`/dashboard/earnings/import/${importId}`);
+  return api.delete(`/earnings/import/${importId}`);
 }

@@ -15,6 +15,10 @@ import { EditVehiclePage } from "./pages/vehicles/EditVehiclePage";
 import { VehicleDetailPage } from "./pages/vehicles/VehicleDetailPage";
 import { VehicleDocumentsPage } from "./pages/vehicles/VehicleDocumentsPage";
 import { OverdueRentalsPage } from "./pages/rentals/OverdueRentalsPage";
+import { EarningsOverviewPage } from "./pages/earnings/EarningsOverviewPage";
+import { EarningsImportPage } from "./pages/earnings/EarningsImportPage";
+import { EarningsPayoutsPage } from "./pages/earnings/EarningsPayoutsPage";
+import { EarningsReportsPage } from "./pages/earnings/EarningsReportsPage";
 
 function ProtectedRoute({ children }: { children: React.ReactElement }) {
   const token = useAuthStore((s) => s.token);
@@ -98,6 +102,38 @@ export default function App() {
         element={
           <ProtectedRoute>
             <OverdueRentalsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/earnings"
+        element={
+          <ProtectedRoute>
+            <EarningsOverviewPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/earnings/import"
+        element={
+          <ProtectedRoute>
+            <EarningsImportPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/earnings/payouts"
+        element={
+          <ProtectedRoute>
+            <EarningsPayoutsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/earnings/reports"
+        element={
+          <ProtectedRoute>
+            <EarningsReportsPage />
           </ProtectedRoute>
         }
       />

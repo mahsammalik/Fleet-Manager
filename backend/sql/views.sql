@@ -6,7 +6,7 @@ SELECT
     (SELECT COUNT(*) FROM driver_documents WHERE organization_id = (SELECT id FROM organizations LIMIT 1) AND is_verified = false) as pending_documents,
     (SELECT COUNT(*) FROM driver_documents WHERE organization_id = (SELECT id FROM organizations LIMIT 1) AND expiry_date < CURRENT_DATE) as expired_documents,
     (SELECT SUM(commission_rate) FROM drivers WHERE organization_id = (SELECT id FROM organizations LIMIT 1)) as total_commission_rate,
-    (SELECT COUNT(*) FROM driver_payments WHERE organization_id = (SELECT id FROM organizations LIMIT 1) AND payment_status = 'pending') as pending_payments;
+    (SELECT COUNT(*) FROM driver_payouts WHERE organization_id = (SELECT id FROM organizations LIMIT 1) AND payment_status = 'pending') as pending_payments;
 
 -- Driver Status Distribution View
 CREATE VIEW driver_status_distribution AS

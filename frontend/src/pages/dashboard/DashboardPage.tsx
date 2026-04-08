@@ -1,24 +1,18 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useAuthStore } from "../../store/authStore";
 import {
   getDashboardStats,
   getDriverStatusDistribution,
-  getMonthlyEarnings,
   getDocumentStats,
   getRecentActivity,
-  getPayoutIntegrityRows,
 } from "../../api/dashboard";
 import type { DashboardActivityItem } from "../../api/dashboard";
 import { AnalyticsCard } from "../../components/dashboard/AnalyticsCard";
 import { ChartPlaceholder } from "../../components/dashboard/ChartPlaceholder";
 import { ActivityTable, type ActivityRow } from "../../components/dashboard/ActivityTable";
 import { DriverStatusChart } from "../../components/dashboard/DriverStatusChart";
-import { EarningsChart } from "../../components/dashboard/EarningsChart";
-import { EarningsImportModal } from "../../components/dashboard/EarningsImportModal";
 import { DocumentStatsChart } from "../../components/dashboard/DocumentStatsChart";
-import { DriverPayoutTable } from "../../components/dashboard/DriverPayoutTable";
 import { formatCurrency } from "../../utils/currency";
 
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -59,14 +53,6 @@ function activityToRows(activities: DashboardActivityItem[]): ActivityRow[] {
   }));
 }
 
-// function ChartIcon() {
-//   return (
-//     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-//       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-//     </svg>
-//   );
-// }
-
 function UsersIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -106,26 +92,17 @@ function VehicleIcon() {
 
 export function DashboardPage() {
   const user = useAuthStore((s) => s.user);
-  const canImportEarnings = user?.role === "admin" || user?.role === "accountant";
-  const [earningsImportOpen, setEarningsImportOpen] = useState(false);
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   const statsQuery = useQuery({ queryKey: ["dashboard", "stats"], queryFn: () => getDashboardStats() });
   const statusQuery = useQuery({ queryKey: ["dashboard", "status"], queryFn: () => getDriverStatusDistribution() });
-  const earningsQuery = useQuery({ queryKey: ["dashboard", "earnings"], queryFn: () => getMonthlyEarnings() });
   const docsQuery = useQuery({ queryKey: ["dashboard", "documents"], queryFn: () => getDocumentStats() });
   const activityQuery = useQuery({ queryKey: ["dashboard", "activity"], queryFn: () => getRecentActivity() });
-  const payoutIntegrityQuery = useQuery({
-    queryKey: ["dashboard", "payout-integrity"],
-    queryFn: () => getPayoutIntegrityRows(),
-  });
 
   const stats = statsQuery.data?.data;
   const statusData = statusQuery.data?.data ?? [];
-  const earningsData = earningsQuery.data?.data ?? [];
   const docsData = docsQuery.data?.data ?? [];
   const activities = activityQuery.data?.data ?? [];
-  const payoutIntegrityRows = payoutIntegrityQuery.data?.data ?? [];
 
   const isLoading = statsQuery.isLoading || statusQuery.isLoading;
   const isError = statsQuery.isError || statusQuery.isError;
@@ -145,8 +122,8 @@ export function DashboardPage() {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
         <div className="text-center">
-            <p className="text-red-600">Failed to load dashboard.</p>
-            <Link to="/drivers" className="mt-2 inline-block text-sm text-sky-600 hover:underline">
+          <p className="text-red-600">Failed to load dashboard.</p>
+          <Link to="/drivers" className="mt-2 inline-block text-sm text-sky-600 hover:underline">
             Go to drivers
           </Link>
         </div>
@@ -156,145 +133,108 @@ export function DashboardPage() {
 
   return (
     <div className="flex flex-col flex-1">
-        <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h1 className="text-xl font-semibold text-slate-900">
-                Welcome{user ? `, ${user.firstName}` : ""}
-              </h1>
-              <p className="text-sm text-slate-500 mt-0.5">{today}</p>
-            </div>
-            <Link
-              to="/drivers"
-              className="text-sm font-medium text-sky-600 hover:underline"
-            >
-              View all drivers →
-            </Link>
+      <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-900">
+              Welcome{user ? `, ${user.firstName}` : ""}
+            </h1>
+            <p className="text-sm text-slate-500 mt-0.5">{today}</p>
           </div>
-        </header>
-
-        <div className="flex-1 overflow-auto p-6">
-          <section className="mb-8">
-            <h2 className="text-sm font-semibold text-slate-700 mb-4">Overview</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-              <Link to="/drivers" className="block rounded-xl hover:shadow-lg transition-shadow">
-                <AnalyticsCard
-                  title="Total drivers"
-                  value={stats.totalDrivers}
-                  icon={<UsersIcon />}
-                />
-              </Link>
-              <Link to="/drivers" className="block rounded-xl hover:shadow-lg transition-shadow">
-                <AnalyticsCard
-                  title="Active drivers"
-                  value={stats.activeDrivers}
-                  trend={{ value: "vs last month", positive: true }}
-                  icon={<UsersIcon />}
-                />
-              </Link>
-              <AnalyticsCard
-                title="Pending documents"
-                value={stats.pendingDocuments}
-                icon={<DocumentIcon />}
-              />
-              <AnalyticsCard
-                title="Expired documents"
-                value={stats.expiredDocuments}
-                trend={{ value: "needs attention", positive: false }}
-                icon={<DocumentIcon />}
-              />
-              <Link to="/vehicles" className="block rounded-xl hover:shadow-lg transition-shadow">
-                <AnalyticsCard
-                  title="Total vehicles"
-                  value={stats.totalVehicles ?? 0}
-                  icon={<VehicleIcon />}
-                />
-              </Link>
-              <Link to="/vehicles" className="block rounded-xl hover:shadow-lg transition-shadow">
-                <AnalyticsCard
-                  title="Active rentals"
-                  value={stats.activeRentals ?? 0}
-                  icon={<VehicleIcon />}
-                />
-              </Link>
-              <Link to="/rentals/overdue" className="block rounded-xl hover:shadow-lg transition-shadow">
-                <AnalyticsCard
-                  title="Overdue rentals"
-                  value={stats.overdueRentals ?? 0}
-                  trend={{ value: "needs attention", positive: false }}
-                  icon={<VehicleIcon />}
-                />
-              </Link>
-              <AnalyticsCard
-                title="Commission earned"
-                value={formatCurrency(stats.totalCommissionEarned ?? 0)}
-                icon={<CurrencyIcon />}
-              />
-              <AnalyticsCard
-                title="Pending payments"
-                value={formatCurrency(stats.pendingPayments ?? 0)}
-                icon={<CurrencyIcon />}
-              />
-            </div>
-          </section>
-
-          {canImportEarnings && (
-            <section className="mb-8">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Earnings import</h2>
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <p className="text-sm text-slate-600">
-                  Upload platform CSV or spreadsheet, confirm provider and pay period, then import.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setEarningsImportOpen(true)}
-                  className="shrink-0 rounded-lg bg-sky-600 text-white text-sm font-medium px-4 py-2 hover:bg-sky-700"
-                >
-                  Import earnings
-                </button>
-              </div>
-              <EarningsImportModal open={earningsImportOpen} onClose={() => setEarningsImportOpen(false)} />
-            </section>
-          )}
-
-          {canImportEarnings && (
-            <section className="mb-8">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Payout fix status</h2>
-              <DriverPayoutTable rows={payoutIntegrityRows} />
-            </section>
-          )}
-
-          <section className="mb-8">
-            <h2 className="text-sm font-semibold text-slate-700 mb-4">Analytics</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3">Driver status</h3>
-                <DriverStatusChart data={statusData} />
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3">Monthly earnings</h3>
-                <EarningsChart data={earningsData} />
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3">Document verification</h3>
-                <DocumentStatsChart data={docsData} />
-              </div>
-              <ChartPlaceholder title="Revenue by platform" height={240} />
-            </div>
-          </section>
-
-          <section>
-            <h2 className="text-sm font-semibold text-slate-700 mb-4">Recent activity</h2>
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <ActivityTable
-                title="Activity feed"
-                rows={activityToRows(activities)}
-                emptyMessage="No recent activity."
-              />
-              <ChartPlaceholder title="Trips this week" height={320} />
-            </div>
-          </section>
+          <Link to="/drivers" className="text-sm font-medium text-sky-600 hover:underline">
+            View all drivers →
+          </Link>
         </div>
+      </header>
+
+      <div className="flex-1 overflow-auto p-6">
+        <section className="mb-8">
+          <h2 className="text-sm font-semibold text-slate-700 mb-4">Overview</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+            <Link to="/drivers" className="block rounded-xl hover:shadow-lg transition-shadow">
+              <AnalyticsCard title="Total drivers" value={stats.totalDrivers} icon={<UsersIcon />} />
+            </Link>
+            <Link to="/drivers" className="block rounded-xl hover:shadow-lg transition-shadow">
+              <AnalyticsCard
+                title="Active drivers"
+                value={stats.activeDrivers}
+                trend={{ value: "vs last month", positive: true }}
+                icon={<UsersIcon />}
+              />
+            </Link>
+            <AnalyticsCard title="Pending documents" value={stats.pendingDocuments} icon={<DocumentIcon />} />
+            <AnalyticsCard
+              title="Expired documents"
+              value={stats.expiredDocuments}
+              trend={{ value: "needs attention", positive: false }}
+              icon={<DocumentIcon />}
+            />
+            <Link to="/vehicles" className="block rounded-xl hover:shadow-lg transition-shadow">
+              <AnalyticsCard title="Total vehicles" value={stats.totalVehicles ?? 0} icon={<VehicleIcon />} />
+            </Link>
+            <Link to="/vehicles" className="block rounded-xl hover:shadow-lg transition-shadow">
+              <AnalyticsCard title="Active rentals" value={stats.activeRentals ?? 0} icon={<VehicleIcon />} />
+            </Link>
+            <Link to="/rentals/overdue" className="block rounded-xl hover:shadow-lg transition-shadow">
+              <AnalyticsCard
+                title="Overdue rentals"
+                value={stats.overdueRentals ?? 0}
+                trend={{ value: "needs attention", positive: false }}
+                icon={<VehicleIcon />}
+              />
+            </Link>
+            <AnalyticsCard
+              title="Commission earned"
+              value={formatCurrency(stats.totalCommissionEarned ?? 0)}
+              icon={<CurrencyIcon />}
+            />
+            <AnalyticsCard
+              title="Pending payments"
+              value={formatCurrency(stats.pendingPayments ?? 0)}
+              icon={<CurrencyIcon />}
+            />
+          </div>
+        </section>
+
+        <section className="mb-8">
+          <h2 className="text-sm font-semibold text-slate-700 mb-4">Analytics</h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Driver status</h3>
+              <DriverStatusChart data={statusData} />
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-col justify-center min-h-[200px]">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Earnings</h3>
+              <p className="text-sm text-slate-600 mb-3">
+                Charts and import live under the <strong>Earnings</strong> section in the sidebar.
+              </p>
+              <Link
+                to="/earnings"
+                className="inline-flex text-sm font-medium text-sky-600 hover:underline w-fit"
+              >
+                Open earnings overview
+              </Link>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Document verification</h3>
+              <DocumentStatsChart data={docsData} />
+            </div>
+            <ChartPlaceholder title="Revenue by platform" height={240} />
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold text-slate-700 mb-4">Recent activity</h2>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <ActivityTable
+              title="Activity feed"
+              rows={activityToRows(activities)}
+              emptyMessage="No recent activity."
+            />
+            <ChartPlaceholder title="Trips this week" height={320} />
+          </div>
+        </section>
       </div>
+    </div>
   );
 }

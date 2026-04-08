@@ -192,8 +192,8 @@ CREATE TABLE IF NOT EXISTS earnings_records (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Driver payments
-CREATE TABLE IF NOT EXISTS driver_payments (
+-- Driver payouts (period rollups)
+CREATE TABLE IF NOT EXISTS driver_payouts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
     driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
@@ -225,10 +225,10 @@ CREATE INDEX IF NOT EXISTS idx_earnings_staging_org ON earnings_import_staging(o
 CREATE INDEX IF NOT EXISTS idx_earnings_records_driver ON earnings_records(driver_id);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_date ON earnings_records(trip_date);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_import ON earnings_records(import_id);
-CREATE INDEX IF NOT EXISTS idx_driver_payments_driver ON driver_payments(driver_id);
-CREATE INDEX IF NOT EXISTS idx_driver_payments_status ON driver_payments(payment_status);
-CREATE INDEX IF NOT EXISTS idx_driver_payments_period ON driver_payments(payment_period_start, payment_period_end);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_payments_org_driver_period ON driver_payments (organization_id, driver_id, payment_period_start, payment_period_end);
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_driver ON driver_payouts(driver_id);
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_status ON driver_payouts(payment_status);
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_period ON driver_payouts(payment_period_start, payment_period_end);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_payouts_org_driver_period ON driver_payouts (organization_id, driver_id, payment_period_start, payment_period_end);
 
 -- Vehicles (company-owned, rented to drivers)
 CREATE TABLE IF NOT EXISTS vehicles (

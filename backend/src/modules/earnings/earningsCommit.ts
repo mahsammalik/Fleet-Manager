@@ -56,7 +56,7 @@ type InsertRow = {
   commission_type: string;
 };
 
-/** Build rows and write earnings_records, driver_payments rollup, finalize import (same transaction as caller). */
+/** Build rows and write earnings_records, driver_payouts rollup, finalize import (same transaction as caller). */
 export async function runEarningsCommitFromStaging(
   client: PoolClient,
   orgId: string,
@@ -233,7 +233,7 @@ export async function runEarningsCommitFromStaging(
 
   for (const [driverId, agg] of byDriver) {
     await client.query(
-      `INSERT INTO driver_payments (
+      `INSERT INTO driver_payouts (
           organization_id, driver_id, payment_period_start, payment_period_end,
           total_gross_earnings, total_platform_fees, total_net_earnings,
           total_daily_cash,
@@ -241,12 +241,12 @@ export async function runEarningsCommitFromStaging(
         ) VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10, 'pending')
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
         DO UPDATE SET
-          total_gross_earnings = COALESCE(driver_payments.total_gross_earnings, 0) + EXCLUDED.total_gross_earnings,
-          total_platform_fees = COALESCE(driver_payments.total_platform_fees, 0) + EXCLUDED.total_platform_fees,
-          total_net_earnings = COALESCE(driver_payments.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
-          total_daily_cash = COALESCE(driver_payments.total_daily_cash, 0) + EXCLUDED.total_daily_cash,
-          company_commission = COALESCE(driver_payments.company_commission, 0) + EXCLUDED.company_commission,
-          net_driver_payout = COALESCE(driver_payments.net_driver_payout, 0) + EXCLUDED.net_driver_payout`,
+          total_gross_earnings = COALESCE(driver_payouts.total_gross_earnings, 0) + EXCLUDED.total_gross_earnings,
+          total_platform_fees = COALESCE(driver_payouts.total_platform_fees, 0) + EXCLUDED.total_platform_fees,
+          total_net_earnings = COALESCE(driver_payouts.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
+          total_daily_cash = COALESCE(driver_payouts.total_daily_cash, 0) + EXCLUDED.total_daily_cash,
+          company_commission = COALESCE(driver_payouts.company_commission, 0) + EXCLUDED.company_commission,
+          net_driver_payout = COALESCE(driver_payouts.net_driver_payout, 0) + EXCLUDED.net_driver_payout`,
       [
         orgId,
         driverId,

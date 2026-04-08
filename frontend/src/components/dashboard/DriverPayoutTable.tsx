@@ -1,5 +1,5 @@
 import { formatCurrency } from "../../utils/currency";
-import type { PayoutIntegrityRow } from "../../api/dashboard";
+import type { PayoutIntegrityRow } from "../../api/earnings";
 
 export interface DriverPayoutTableProps {
   rows: PayoutIntegrityRow[];

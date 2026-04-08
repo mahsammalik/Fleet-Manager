@@ -92,7 +92,7 @@ async function loadMatchIndex(orgId: string): Promise<DriverMatchIndex> {
   return new DriverMatchIndex(drivers, plates);
 }
 
-router.post("/earnings/import/preview", earningsUpload.single("file"), async (req, res) => {
+router.post("/import/preview", earningsUpload.single("file"), async (req, res) => {
   const orgId = req.user?.orgId;
   const userId = req.user?.sub;
   if (!orgId || !userId) {
@@ -200,7 +200,7 @@ router.post("/earnings/import/preview", earningsUpload.single("file"), async (re
   }
 });
 
-router.post("/earnings/import/commit", async (req, res) => {
+router.post("/import/commit", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) {
     return res.status(400).json({ message: "User is not associated with an organization" });
@@ -313,7 +313,7 @@ router.post("/earnings/import/commit", async (req, res) => {
   }
 });
 
-router.delete("/earnings/import/:id", async (req, res) => {
+router.delete("/import/:id", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) {
     return res.status(400).json({ message: "User is not associated with an organization" });
@@ -335,7 +335,7 @@ router.delete("/earnings/import/:id", async (req, res) => {
   }
 });
 
-router.put("/earnings/payouts/:id/recalculate", async (req, res) => {
+router.put("/records/:id/recalculate", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
   const { id } = req.params;
@@ -395,7 +395,7 @@ router.put("/earnings/payouts/:id/recalculate", async (req, res) => {
   }
 });
 
-router.post("/earnings/payouts/recalculate-bulk", async (req, res) => {
+router.post("/records/recalculate-bulk", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
   const onlyCash = (req.body as { onlyCashCommission?: boolean } | undefined)?.onlyCashCommission ?? true;
@@ -448,4 +448,406 @@ router.post("/earnings/payouts/recalculate-bulk", async (req, res) => {
   }
 });
 
-export const earningsImportRoutes = router;
+router.get("/imports", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? "20"), 10) || 20));
+  const offset = (page - 1) * pageSize;
+  try {
+    const [{ rows: countRows }, { rows }] = await Promise.all([
+      pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM earnings_imports WHERE organization_id = $1`,
+        [orgId],
+      ),
+      pool.query(
+        `SELECT id::text, file_name, import_date::text, week_start::text, week_end::text, platform, record_count,
+                status, created_at::text
+         FROM earnings_imports
+         WHERE organization_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [orgId, pageSize, offset],
+      ),
+    ]);
+    const total = parseInt(countRows[0]?.c ?? "0", 10);
+    return res.json({ items: rows, page, pageSize, total });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings imports list error", err);
+    return res.status(500).json({ message: "Failed to list imports" });
+  }
+});
+
+router.get("/overview", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  try {
+    const [pendingRes, earnings30Res, avgPaidRes, monthlyRes] = await Promise.all([
+      query<{ t: string | null }>(
+        `SELECT COALESCE(SUM(net_driver_payout), 0)::text AS t
+         FROM driver_payouts WHERE organization_id = $1 AND payment_status = 'pending'`,
+        [orgId],
+      ),
+      query<{ t: string | null }>(
+        `SELECT COALESCE(SUM(COALESCE(er.gross_earnings, 0)), 0)::text AS t
+         FROM earnings_records er
+         INNER JOIN drivers d ON er.driver_id = d.id
+         WHERE d.organization_id = $1 AND er.trip_date >= (CURRENT_DATE - INTERVAL '30 days')::date`,
+        [orgId],
+      ),
+      query<{ t: string | null }>(
+        `SELECT COALESCE(AVG(net_driver_payout), 0)::text AS t
+         FROM driver_payouts
+         WHERE organization_id = $1
+           AND payment_status = 'paid'
+           AND payment_period_end >= (CURRENT_DATE - INTERVAL '90 days')::date`,
+        [orgId],
+      ),
+      query<{ m: Date | string; total: string | null; commission: string | null }>(
+        `SELECT date_trunc('month', er.trip_date AT TIME ZONE 'UTC') AS m,
+                SUM(COALESCE(er.gross_earnings, 0))::text AS total,
+                SUM(COALESCE(er.company_commission, 0))::text AS commission
+         FROM earnings_records er
+         INNER JOIN drivers d ON er.driver_id = d.id
+         WHERE d.organization_id = $1
+         GROUP BY 1
+         ORDER BY 1 ASC`,
+        [orgId],
+      ),
+    ]);
+
+    const monthly = monthlyRes.rows.map((r) => {
+      const monthDate = r.m instanceof Date ? r.m : new Date(r.m);
+      const label = monthDate.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+      return {
+        month: label,
+        totalEarnings: parseFloat(r.total ?? "0"),
+        totalCommission: parseFloat(r.commission ?? "0"),
+      };
+    });
+
+    return res.json({
+      kpis: {
+        pendingPaymentsTotal: parseFloat(pendingRes.rows[0]?.t ?? "0"),
+        totalEarningsLast30Days: parseFloat(earnings30Res.rows[0]?.t ?? "0"),
+        avgPayoutPaidLast90Days: parseFloat(avgPaidRes.rows[0]?.t ?? "0"),
+      },
+      monthly,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings overview error", err);
+    return res.status(500).json({ message: "Failed to load overview" });
+  }
+});
+
+router.get("/records/payout-integrity", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  try {
+    const { rows } = await query<{
+      id: string;
+      driver_id: string;
+      trip_date: string;
+      platform: string;
+      net_earnings: string | null;
+      driver_payout: string | null;
+      cash_commission: string | null;
+      total_transfer_earnings: string | null;
+      account_opening_fee: string | null;
+      transfer_commission: string | null;
+      expected_payout: string | null;
+      ok: boolean;
+    }>(
+      `SELECT
+         er.id::text,
+         er.driver_id::text,
+         er.trip_date::text,
+         er.platform,
+         er.net_earnings::text,
+         er.driver_payout::text,
+         er.cash_commission::text,
+         er.total_transfer_earnings::text AS total_transfer_earnings,
+         er.account_opening_fee::text AS account_opening_fee,
+         er.transfer_commission::text AS transfer_commission,
+         GREATEST(
+           0,
+           ROUND(
+             (
+               COALESCE(
+                 er.total_transfer_earnings,
+                 er.net_earnings,
+                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                 er.gross_earnings,
+                 0
+               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
+             )::numeric,
+             2
+           )
+         )::text AS expected_payout,
+         (
+           COALESCE(er.driver_payout, 0)::numeric(12, 2) =
+           GREATEST(
+             0,
+             ROUND(
+               (
+                 COALESCE(
+                   er.total_transfer_earnings,
+                   er.net_earnings,
+                   COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+                   er.gross_earnings,
+                   0
+                 ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
+               )::numeric,
+               2
+             )
+           )::numeric(12, 2)
+         ) AS ok
+       FROM earnings_records er
+       JOIN earnings_imports ei ON ei.id = er.import_id
+       WHERE ei.organization_id = $1
+         AND COALESCE(er.cash_commission, 0) <> 0
+       ORDER BY er.trip_date DESC, er.created_at DESC
+       LIMIT 100`,
+      [orgId],
+    );
+    return res.json(rows);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Payout integrity error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+const PAY_STATUSES = new Set(["pending", "approved", "paid", "hold"]);
+
+router.get("/payouts", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize ?? "25"), 10) || 25));
+  const offset = (page - 1) * pageSize;
+  const statusRaw = req.query.status != null && String(req.query.status).trim() !== "" ? String(req.query.status) : null;
+  const status = statusRaw && PAY_STATUSES.has(statusRaw) ? statusRaw : null;
+  const from = typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
+  const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
+  const qSearch =
+    typeof req.query.q === "string" && req.query.q.trim() !== "" ? `%${req.query.q.trim()}%` : null;
+
+  try {
+    const where: string[] = ["dp.organization_id = $1"];
+    const params: unknown[] = [orgId];
+    let p = 2;
+    if (status) {
+      where.push(`dp.payment_status = $${p++}`);
+      params.push(status);
+    }
+    if (from) {
+      where.push(`dp.payment_period_end >= $${p++}::date`);
+      params.push(from);
+    }
+    if (to) {
+      where.push(`dp.payment_period_start <= $${p++}::date`);
+      params.push(to);
+    }
+    if (qSearch) {
+      where.push(
+        `(d.first_name ILIKE $${p} OR d.last_name ILIKE $${p} OR d.phone ILIKE $${p} OR CONCAT(d.first_name, ' ', d.last_name) ILIKE $${p})`,
+      );
+      params.push(qSearch);
+      p++;
+    }
+    const whereSql = where.join(" AND ");
+
+    const countRes = await pool.query<{ c: string }>(
+      `SELECT COUNT(*)::text AS c
+       FROM driver_payouts dp
+       INNER JOIN drivers d ON d.id = dp.driver_id
+       WHERE ${whereSql}`,
+      params,
+    );
+    const total = parseInt(countRes.rows[0]?.c ?? "0", 10);
+
+    params.push(pageSize, offset);
+    const listRes = await pool.query(
+      `SELECT dp.id::text, dp.driver_id::text, dp.payment_period_start::text, dp.payment_period_end::text,
+              dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
+              dp.total_gross_earnings::text, dp.company_commission::text,
+              d.first_name, d.last_name, d.phone
+       FROM driver_payouts dp
+       INNER JOIN drivers d ON d.id = dp.driver_id
+       WHERE ${whereSql}
+       ORDER BY dp.payment_period_end DESC, dp.created_at DESC
+       LIMIT $${p} OFFSET $${p + 1}`,
+      params,
+    );
+
+    return res.json({ items: listRes.rows, page, pageSize, total });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings payouts list error", err);
+    return res.status(500).json({ message: "Failed to list payouts" });
+  }
+});
+
+router.patch("/payouts/bulk", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const body = req.body as {
+    ids?: unknown;
+    paymentStatus?: string;
+    paymentDate?: string;
+    paymentMethod?: string;
+    transactionRef?: string;
+  };
+  const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === "string") : [];
+  if (!ids.length) return res.status(400).json({ message: "ids is required" });
+
+  const paymentStatus = body.paymentStatus ?? "paid";
+  if (!PAY_STATUSES.has(paymentStatus)) {
+    return res.status(400).json({ message: "Invalid paymentStatus" });
+  }
+
+  let paymentDate: string | null = null;
+  if (body.paymentDate !== undefined && body.paymentDate !== null && String(body.paymentDate).trim() !== "") {
+    const d = String(body.paymentDate).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return res.status(400).json({ message: "paymentDate must be YYYY-MM-DD" });
+    paymentDate = d;
+  } else if (paymentStatus === "paid") {
+    paymentDate = new Date().toISOString().slice(0, 10);
+  }
+
+  const setPaidDate = paymentStatus === "paid";
+
+  try {
+    const result = await pool.query(
+      `UPDATE driver_payouts dp
+       SET payment_status = $2::varchar(50),
+           payment_date = CASE WHEN $7 THEN COALESCE($3::date, CURRENT_DATE) ELSE payment_date END,
+           payment_method = COALESCE($4, payment_method),
+           transaction_ref = COALESCE($5, transaction_ref)
+       WHERE dp.organization_id = $1 AND dp.id = ANY($6::uuid[])`,
+      [orgId, paymentStatus, paymentDate, body.paymentMethod ?? null, body.transactionRef ?? null, ids, setPaidDate],
+    );
+    return res.json({ updatedRows: result.rowCount ?? 0 });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings payouts bulk update error", err);
+    return res.status(500).json({ message: "Bulk update failed" });
+  }
+});
+
+type PayoutExportRow = {
+  id: string;
+  driver_id: string;
+  payment_period_start: string;
+  payment_period_end: string;
+  net_driver_payout: string | null;
+  payment_status: string;
+  payment_date: string | null;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+};
+
+async function fetchPayoutExportRows(
+  orgId: string,
+  status: string | null,
+  from: string | null,
+  to: string | null,
+  q: string | null,
+): Promise<PayoutExportRow[]> {
+  const where: string[] = ["dp.organization_id = $1"];
+  const params: unknown[] = [orgId];
+  let p = 2;
+  if (status) {
+    where.push(`dp.payment_status = $${p++}`);
+    params.push(status);
+  }
+  if (from) {
+    where.push(`dp.payment_period_end >= $${p++}::date`);
+    params.push(from);
+  }
+  if (to) {
+    where.push(`dp.payment_period_start <= $${p++}::date`);
+    params.push(to);
+  }
+  if (q) {
+    const qq = `%${q.trim()}%`;
+    where.push(
+      `(d.first_name ILIKE $${p} OR d.last_name ILIKE $${p} OR d.phone ILIKE $${p} OR CONCAT(d.first_name, ' ', d.last_name) ILIKE $${p})`,
+    );
+    params.push(qq);
+    p++;
+  }
+  const whereSql = where.join(" AND ");
+  const { rows } = await pool.query<PayoutExportRow>(
+    `SELECT dp.id::text, dp.driver_id::text, dp.payment_period_start::text, dp.payment_period_end::text,
+            dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
+            d.first_name, d.last_name, d.phone
+     FROM driver_payouts dp
+     INNER JOIN drivers d ON d.id = dp.driver_id
+     WHERE ${whereSql}
+     ORDER BY dp.payment_period_end DESC, dp.created_at DESC
+     LIMIT 10000`,
+    params,
+  );
+  return rows;
+}
+
+router.get("/reports/export", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const statusRaw = req.query.status != null && String(req.query.status).trim() !== "" ? String(req.query.status) : null;
+  const status = statusRaw && PAY_STATUSES.has(statusRaw) ? statusRaw : null;
+  const from = typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
+  const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
+  const q = typeof req.query.q === "string" && req.query.q.trim() !== "" ? req.query.q : null;
+
+  try {
+    const rows = await fetchPayoutExportRows(orgId, status, from, to, q);
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const header = [
+      "id",
+      "driver_id",
+      "first_name",
+      "last_name",
+      "phone",
+      "period_start",
+      "period_end",
+      "net_payout",
+      "status",
+      "paid_date",
+    ];
+    const lines = [
+      header.join(","),
+      ...rows.map((r) =>
+        [
+          r.id,
+          r.driver_id,
+          esc(r.first_name),
+          esc(r.last_name),
+          r.phone != null ? esc(r.phone) : "",
+          r.payment_period_start,
+          r.payment_period_end,
+          r.net_driver_payout ?? "",
+          r.payment_status,
+          r.payment_date ?? "",
+        ].join(","),
+      ),
+    ];
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="earnings-payouts-report.csv"');
+    return res.send(lines.join("\n"));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings export error", err);
+    return res.status(500).json({ message: "Export failed" });
+  }
+});
+
+export const earningsRoutes = router;

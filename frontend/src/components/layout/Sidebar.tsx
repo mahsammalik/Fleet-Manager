@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { useAuthStore } from "../../store/authStore";
 import { LogoutButton } from "../UI/LogoutButton";
 
 const navItems = [
@@ -8,6 +10,13 @@ const navItems = [
   { to: "/vehicles", label: "Vehicles", icon: VehiclesIcon },
   { to: "/rentals/overdue", label: "Overdue rentals", icon: VehiclesIcon },
   { to: "/vehicles/new", label: "Add vehicle", icon: AddIcon },
+];
+
+const earningsSubItems = [
+  { to: "/earnings", label: "Overview" },
+  { to: "/earnings/import", label: "Import" },
+  { to: "/earnings/payouts", label: "Payouts" },
+  { to: "/earnings/reports", label: "Reports" },
 ];
 
 function DashboardIcon({ className }: { className?: string }) {
@@ -46,6 +55,14 @@ function VehiclesIcon({ className }: { className?: string }) {
   );
 }
 
+function EarningsIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
 function ChevronLeft({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -62,6 +79,14 @@ function ChevronRight({ className }: { className?: string }) {
   );
 }
 
+function ChevronDown({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
 export interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
@@ -69,6 +94,15 @@ export interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
+  const role = useAuthStore((s) => s.user?.role);
+  const showEarnings = role === "admin" || role === "accountant";
+  const [earningsOpen, setEarningsOpen] = useState(() => location.pathname.startsWith("/earnings"));
+
+  useEffect(() => {
+    if (location.pathname.startsWith("/earnings")) setEarningsOpen(true);
+  }, [location.pathname]);
+
+  const earningsActive = location.pathname.startsWith("/earnings");
 
   return (
     <aside
@@ -103,7 +137,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               key={to}
               to={to}
               className={`
-                flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]
                 ${isActive
                   ? "bg-slate-100 text-slate-900"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"}
@@ -114,6 +148,57 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             </Link>
           );
         })}
+
+        {showEarnings &&
+          (collapsed ? (
+            <Link
+              to="/earnings"
+              title="Earnings"
+              className={`
+                flex items-center justify-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]
+                ${earningsActive
+                  ? "bg-slate-100 text-slate-900"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"}
+              `}
+            >
+              <EarningsIcon className="w-5 h-5 shrink-0" />
+            </Link>
+          ) : (
+            <div className="rounded-lg">
+              <button
+                type="button"
+                onClick={() => setEarningsOpen((o) => !o)}
+                className={`
+                  flex w-full items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px] text-left
+                  ${earningsActive ? "bg-slate-100 text-slate-900" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"}
+                `}
+                aria-expanded={earningsOpen}
+              >
+                <EarningsIcon className="w-5 h-5 shrink-0" />
+                <span className="flex-1 truncate">Earnings</span>
+                <ChevronDown className={`w-4 h-4 shrink-0 transition-transform ${earningsOpen ? "rotate-180" : ""}`} />
+              </button>
+              {earningsOpen && (
+                <div className="mt-0.5 ml-2 pl-3 border-l border-slate-200 space-y-0.5">
+                  {earningsSubItems.map(({ to, label }) => {
+                    const active = to === "/earnings" ? location.pathname === "/earnings" : location.pathname.startsWith(to);
+                    return (
+                      <Link
+                        key={to}
+                        to={to}
+                        className={`
+                          flex items-center px-3 py-2 rounded-md text-sm min-h-[40px]
+                          ${active ? "bg-sky-50 text-sky-900 font-medium" : "text-slate-600 hover:bg-slate-50"}
+                        `}
+                      >
+                        {label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
       </nav>
 
       <div className="p-2 border-t border-slate-200">
