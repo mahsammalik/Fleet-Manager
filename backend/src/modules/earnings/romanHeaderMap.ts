@@ -130,10 +130,17 @@ reg(
     "incasari nete",
     "amount net",
     "net amount",
-    "total venituri de transfera",
-    "total venituri de transferat",
   ],
   "net",
+);
+
+reg(
+  [
+    "total venituri de transfera",
+    "total venituri de transferat",
+    "total venituri transferat",
+  ],
+  "transfer_total",
 );
 
 reg(

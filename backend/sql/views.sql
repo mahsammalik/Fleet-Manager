@@ -18,6 +18,7 @@ WHERE organization_id = (SELECT id FROM organizations LIMIT 1)
 GROUP BY employment_status;
 
 -- Monthly Earnings View
+-- Note: earnings_records.net_earnings is net after fleet commission (incl. cash commission); not raw platform net.
 CREATE VIEW monthly_earnings AS
 SELECT 
     DATE_TRUNC('month', er.created_at) as month,

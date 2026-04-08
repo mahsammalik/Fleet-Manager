@@ -6,6 +6,7 @@ export type CanonicalField =
   | "gross"
   | "platform_fee"
   | "net"
+  | "transfer_total"
   | "daily_cash"
   | "trips";
 
@@ -19,6 +20,8 @@ export interface NormalizedAmounts {
   gross: number | null;
   net: number | null;
   platformFee: number | null;
+  /** Total Venituri de transferat (TVT); commission transfer base when present. */
+  transferTotal: number | null;
   dailyCash: number | null;
   tripCount: number | null;
 }
@@ -88,6 +91,7 @@ export function rowCellsToNormalized(
     gross: null,
     net: null,
     platformFee: null,
+    transferTotal: null,
     dailyCash: null,
     tripCount: null,
   };
@@ -115,6 +119,11 @@ export function rowCellsToNormalized(
       case "net":
         amounts.net = parseRoNumber(raw);
         break;
+      case "transfer_total": {
+        const v = parseRoNumber(raw);
+        amounts.transferTotal = v === null ? null : Math.abs(v);
+        break;
+      }
       case "platform_fee": {
         const v = parseRoNumber(raw);
         // Exports may show platform fee as negative; store magnitude as positive.

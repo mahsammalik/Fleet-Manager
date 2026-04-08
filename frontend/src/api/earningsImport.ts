@@ -5,7 +5,10 @@ export interface EarningsPreviewRow {
   tripDate: string | null;
   gross: number | null;
   net: number | null;
+  /** Total Venituri de transferat (TVT) when column mapped */
+  transferTotal: number | null;
   platformFee: number | null;
+  dailyCash: number | null;
   tripCount: number | null;
   matchMethod: string;
   driverMatched: boolean;

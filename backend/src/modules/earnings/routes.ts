@@ -35,9 +35,10 @@ function collectWarnings(
   const w: string[] = [];
   const hasGross = [...colMap.values()].includes("gross");
   const hasNet = [...colMap.values()].includes("net");
+  const hasTransferTotal = [...colMap.values()].includes("transfer_total");
   const hasDate = [...colMap.values()].includes("trip_date");
-  if (!hasGross && !hasNet) {
-    w.push("No gross or net earnings column detected; check Romanian/English headers.");
+  if (!hasGross && !hasNet && !hasTransferTotal) {
+    w.push("No gross, net, or TVT (total transfer) column detected; check Romanian/English headers.");
   }
   if (!hasDate && !filenameDate) {
     w.push("No trip date column and no date found in filename; rows may lack dates.");
@@ -49,14 +50,16 @@ function collectWarnings(
   for (const r of normalizedRows) {
     const g = r.amounts.gross;
     const n = r.amounts.net;
-    if (g === null && n === null) noMoney += 1;
+    const tt = r.amounts.transferTotal;
+    if (g === null && n === null && tt === null) noMoney += 1;
     if (g !== null && g < 0) badMoney += 1;
     if (n !== null && n < 0) badMoney += 1;
+    if (tt !== null && tt < 0) badMoney += 1;
     if (!r.tripDateIso) noDate += 1;
-    const k = `${r.hints.courierId ?? ""}|${r.hints.phone ?? ""}|${r.hints.plate ?? ""}|${r.tripDateIso ?? ""}|${g ?? ""}|${n ?? ""}`;
+    const k = `${r.hints.courierId ?? ""}|${r.hints.phone ?? ""}|${r.hints.plate ?? ""}|${r.tripDateIso ?? ""}|${g ?? ""}|${n ?? ""}|${tt ?? ""}`;
     dupKeys.set(k, (dupKeys.get(k) ?? 0) + 1);
   }
-  if (noMoney > 0) w.push(`${noMoney} row(s) have no gross/net amount.`);
+  if (noMoney > 0) w.push(`${noMoney} row(s) have no gross, net, or TVT amount.`);
   if (badMoney > 0) w.push(`${badMoney} row(s) have negative amounts.`);
   if (noDate > 0) w.push(`${noDate} row(s) are missing trip dates.`);
   const dups = [...dupKeys.values()].filter((c) => c > 1).length;
@@ -136,6 +139,7 @@ router.post("/earnings/import/preview", earningsUpload.single("file"), async (re
         tripDate: r.tripDateIso,
         gross: r.amounts.gross,
         net: r.amounts.net,
+        transferTotal: r.amounts.transferTotal,
         platformFee: r.amounts.platformFee,
         dailyCash: r.amounts.dailyCash,
         tripCount: r.amounts.tripCount,
@@ -336,6 +340,10 @@ router.post("/earnings/import/commit", async (req, res) => {
       gross: number | null;
       fee: number | null;
       net: number | null;
+      total_transfer_earnings: number | null;
+      daily_cash: number | null;
+      transfer_commission: number;
+      cash_commission: number;
       company_commission: number;
       driver_payout: number;
       commission_type: string;
@@ -361,7 +369,8 @@ router.post("/earnings/import/commit", async (req, res) => {
       const gross = p.amounts.gross;
       const net = p.amounts.net;
       const fee = p.amounts.platformFee;
-      if (gross === null && net === null) {
+      const transferTotalRaw = p.amounts.transferTotal ?? null;
+      if (gross === null && net === null && transferTotalRaw === null) {
         skippedNoMoney += 1;
         continue;
       }
@@ -381,9 +390,15 @@ router.post("/earnings/import/commit", async (req, res) => {
       // Platform fee stored as positive magnitude (defensive for older staged payloads).
       if (f !== null && f < 0) f = Math.abs(f);
 
-      // Commission and payout only on transfer (Total Venituri), not raw gross fallback.
-      const transferAmount = n ?? g ?? 0;
-      const comm = computeCommissionComponents(drv, transferAmount, 0);
+      // Transfer commission base: explicit TVT column, else net, else gross.
+      const transferAmount = transferTotalRaw ?? n ?? g ?? 0;
+      const cashAmount = p.amounts.dailyCash ?? 0;
+      const comm = computeCommissionComponents(drv, transferAmount, cashAmount);
+
+      const driverPayout = Math.max(
+        0,
+        Math.round((transferAmount - comm.company_commission) * 100) / 100,
+      );
 
       toInsert.push({
         driver_id: driverId,
@@ -391,13 +406,14 @@ router.post("/earnings/import/commit", async (req, res) => {
         trip_count: p.amounts.tripCount,
         gross: g,
         fee: f,
-        net: n,
+        // net_earnings: persist post–fleet-commission amount (transfer base minus full company_commission, incl. cash leg).
+        net: driverPayout,
+        total_transfer_earnings: transferTotalRaw,
+        daily_cash: p.amounts.dailyCash ?? null,
+        transfer_commission: comm.transfer_commission,
+        cash_commission: comm.cash_commission,
         company_commission: comm.company_commission,
-        // Driver payout is based only on transfer amount (cash settled separately).
-        driver_payout: Math.max(
-          0,
-          Math.round((transferAmount - comm.company_commission) * 100) / 100,
-        ),
+        driver_payout: driverPayout,
         commission_type: comm.commission_type,
       });
     }
@@ -410,7 +426,7 @@ router.post("/earnings/import/commit", async (req, res) => {
       let p = 1;
       for (const r of slice) {
         ph.push(
-          `($${p++}::uuid, $${p++}::uuid, $${p++}, $${p++}::date, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`,
+          `($${p++}::uuid, $${p++}::uuid, $${p++}, $${p++}::date, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`,
         );
         values.push(
           importId,
@@ -421,6 +437,10 @@ router.post("/earnings/import/commit", async (req, res) => {
           r.gross,
           r.fee,
           r.net,
+          r.total_transfer_earnings,
+          r.daily_cash,
+          r.transfer_commission,
+          r.cash_commission,
           r.company_commission,
           r.driver_payout,
           r.commission_type,
@@ -430,6 +450,7 @@ router.post("/earnings/import/commit", async (req, res) => {
         `INSERT INTO earnings_records (
           import_id, driver_id, platform, trip_date, trip_count,
           gross_earnings, platform_fee, net_earnings,
+          total_transfer_earnings, daily_cash, transfer_commission, cash_commission,
           company_commission, driver_payout, commission_type
         ) VALUES ${ph.join(",")}`,
         values,
@@ -461,15 +482,23 @@ router.post("/earnings/import/commit", async (req, res) => {
 
     const byDriver = new Map<
       string,
-      { gross: number; fee: number; net: number; comm: number; payout: number }
+      { gross: number; fee: number; net: number; comm: number; payout: number; dailyCash: number }
     >();
     for (const r of toInsert) {
-      const cur = byDriver.get(r.driver_id) ?? { gross: 0, fee: 0, net: 0, comm: 0, payout: 0 };
+      const cur = byDriver.get(r.driver_id) ?? {
+        gross: 0,
+        fee: 0,
+        net: 0,
+        comm: 0,
+        payout: 0,
+        dailyCash: 0,
+      };
       cur.gross += r.gross ?? 0;
       cur.fee += r.fee ?? 0;
       cur.net += r.net ?? 0;
       cur.comm += r.company_commission;
       cur.payout += r.driver_payout;
+      cur.dailyCash += r.daily_cash ?? 0;
       byDriver.set(r.driver_id, cur);
     }
 
@@ -478,13 +507,15 @@ router.post("/earnings/import/commit", async (req, res) => {
         `INSERT INTO driver_payments (
           organization_id, driver_id, payment_period_start, payment_period_end,
           total_gross_earnings, total_platform_fees, total_net_earnings,
+          total_daily_cash,
           company_commission, net_driver_payout, payment_status
-        ) VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, 'pending')
+        ) VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10, 'pending')
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
         DO UPDATE SET
           total_gross_earnings = COALESCE(driver_payments.total_gross_earnings, 0) + EXCLUDED.total_gross_earnings,
           total_platform_fees = COALESCE(driver_payments.total_platform_fees, 0) + EXCLUDED.total_platform_fees,
           total_net_earnings = COALESCE(driver_payments.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
+          total_daily_cash = COALESCE(driver_payments.total_daily_cash, 0) + EXCLUDED.total_daily_cash,
           company_commission = COALESCE(driver_payments.company_commission, 0) + EXCLUDED.company_commission,
           net_driver_payout = COALESCE(driver_payments.net_driver_payout, 0) + EXCLUDED.net_driver_payout`,
         [
@@ -495,6 +526,7 @@ router.post("/earnings/import/commit", async (req, res) => {
           agg.gross,
           agg.fee,
           agg.net,
+          agg.dailyCash,
           agg.comm,
           agg.payout,
         ],

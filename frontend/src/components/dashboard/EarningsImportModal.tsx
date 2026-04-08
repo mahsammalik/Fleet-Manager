@@ -289,7 +289,13 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                     <th className="py-2 pr-2 font-medium">Date</th>
                     <th className="py-2 pr-2 font-medium">Gross</th>
                     <th className="py-2 pr-2 font-medium">Net</th>
+                    <th className="py-2 pr-2 font-medium" title="Total Venituri de transferat">
+                      TVT
+                    </th>
                     <th className="py-2 pr-2 font-medium">Fee</th>
+                    <th className="py-2 pr-2 font-medium" title="Plată zilnică cu cash">
+                      Cash
+                    </th>
                     <th className="py-2 pr-2 font-medium">Match</th>
                     <th className="py-2 pr-2 font-medium">Driver</th>
                   </tr>
@@ -301,7 +307,13 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                       <td className="py-1.5 pr-2 text-slate-800">{r.tripDate ?? "—"}</td>
                       <td className="py-1.5 pr-2">{r.gross != null ? formatCurrency(r.gross) : "—"}</td>
                       <td className="py-1.5 pr-2">{r.net != null ? formatCurrency(r.net) : "—"}</td>
+                      <td className="py-1.5 pr-2">
+                        {r.transferTotal != null ? formatCurrency(r.transferTotal) : "—"}
+                      </td>
                       <td className="py-1.5 pr-2">{r.platformFee != null ? formatCurrency(r.platformFee) : "—"}</td>
+                      <td className="py-1.5 pr-2">
+                        {r.dailyCash != null ? formatCurrency(r.dailyCash) : "—"}
+                      </td>
                       <td className="py-1.5 pr-2 text-slate-600">{MATCH_LABEL[r.matchMethod] ?? r.matchMethod}</td>
                       <td className="py-1.5 pr-2">
                         {r.driverMatched ? (
@@ -342,8 +354,10 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
               </button>
             </div>
             <p className="text-xs text-slate-500">
-              Rows without a date in the file use the period end as trip date. Only rows with a matched driver and
-              gross or net amount are written. Totals roll into pending driver payments for the period above.
+              Rows without a date in the file use the period end as trip date. Only rows with a matched driver and a
+              gross, net, or TVT amount are written. Transfer commission uses TVT when the column is present, otherwise
+              net; cash commission uses daily cash when present. Totals roll into pending driver payments for the period
+              above.
             </p>
           </div>
         )}
