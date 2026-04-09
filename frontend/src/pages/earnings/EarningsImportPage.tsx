@@ -190,6 +190,10 @@ export function EarningsImportPage() {
                 </>
               )}
             </p>
+            <p className="mt-2 text-xs text-emerald-900/80">
+              Matched rows use the full vehicle rental contract amount (total_rent_amount), not a daily split. Payouts sum each
+              rental once per period.
+            </p>
           </div>
         )}
 

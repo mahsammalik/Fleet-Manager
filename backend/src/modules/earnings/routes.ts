@@ -802,11 +802,7 @@ router.get("/payouts/with-proration-details", async (req, res) => {
           vr.rental_start_date::text AS rental_start_date,
           vr.rental_end_date::text AS rental_end_date,
           vr.rental_type,
-          CASE
-            WHEN COALESCE(vr.total_rent_amount, 0) > 0 AND COALESCE(dp.vehicle_rental_fee, 0) > 0
-              THEN ROUND((dp.vehicle_rental_fee / vr.total_rent_amount) * 100.0, 2)::text
-            ELSE NULL
-          END AS overlap_pct
+          NULL::text AS overlap_pct
         FROM driver_payouts dp
         INNER JOIN drivers d ON d.id = dp.driver_id
         LEFT JOIN LATERAL (

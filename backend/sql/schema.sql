@@ -391,18 +391,14 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_documents_expiry ON vehicle_documents(exp
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_verified ON vehicle_documents(is_verified);
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_organization ON vehicle_documents(organization_id);
 
--- Match earnings row to vehicle rental by driver + trip_date (pro-rated daily fee from total_rent_amount or vehicle.daily_rent).
+-- Match earnings row to vehicle rental by driver + trip_date (full total_rent_amount, or vehicle.daily_rent if amount unset).
 CREATE OR REPLACE FUNCTION earnings_records_match_vehicle_rental()
 RETURNS TRIGGER AS $$
 DECLARE
   rid UUID;
   v_total NUMERIC(12, 2);
-  v_start DATE;
-  v_end DATE;
   v_vehicle_id UUID;
-  days INT;
   daily_rent NUMERIC(10, 2);
-  rfee NUMERIC(10, 2);
 BEGIN
   IF NEW.driver_id IS NULL OR NEW.trip_date IS NULL THEN
     NEW.vehicle_rental_id := NULL;
@@ -410,8 +406,8 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT v.id, v.total_rent_amount, v.rental_start_date, v.rental_end_date, v.vehicle_id
-  INTO rid, v_total, v_start, v_end, v_vehicle_id
+  SELECT v.id, v.total_rent_amount, v.vehicle_id
+  INTO rid, v_total, v_vehicle_id
   FROM vehicle_rentals v
   INNER JOIN drivers d ON d.id = NEW.driver_id AND d.organization_id = v.organization_id
   WHERE v.driver_id = NEW.driver_id
@@ -428,11 +424,9 @@ BEGIN
   END IF;
 
   NEW.vehicle_rental_id := rid;
-  days := GREATEST((v_end - v_start + 1), 1);
 
   IF v_total IS NOT NULL THEN
-    rfee := ROUND((v_total / days::numeric)::numeric, 2);
-    NEW.vehicle_rental_fee := rfee;
+    NEW.vehicle_rental_fee := ROUND(v_total::numeric, 2);
   ELSE
     SELECT ve.daily_rent INTO daily_rent FROM vehicles ve WHERE ve.id = v_vehicle_id;
     IF daily_rent IS NULL THEN
@@ -461,22 +455,24 @@ BEGIN
   SET vehicle_rental_fee = COALESCE(agg.s, 0)
   FROM (
     SELECT dp2.id,
-           COALESCE(SUM(x.vehicle_rental_fee), 0) AS s
+           COALESCE((
+             SELECT SUM(sub.mx)
+             FROM (
+               SELECT er.vehicle_rental_id,
+                      MAX(er.vehicle_rental_fee) AS mx
+               FROM earnings_records er
+               INNER JOIN earnings_imports ei ON ei.id = er.import_id
+               WHERE er.driver_id = dp2.driver_id
+                 AND ei.organization_id = dp2.organization_id
+                 AND ei.week_start = dp2.payment_period_start
+                 AND ei.week_end = dp2.payment_period_end
+                 AND er.vehicle_rental_id IS NOT NULL
+                 AND er.vehicle_rental_fee IS NOT NULL
+               GROUP BY er.vehicle_rental_id
+             ) sub
+           ), 0) AS s
     FROM driver_payouts dp2
-    LEFT JOIN (
-      SELECT er.driver_id,
-             er.vehicle_rental_fee,
-             ei.organization_id,
-             ei.week_start,
-             ei.week_end
-      FROM earnings_records er
-      INNER JOIN earnings_imports ei ON ei.id = er.import_id
-    ) x ON x.driver_id = dp2.driver_id
-      AND x.organization_id = dp2.organization_id
-      AND x.week_start = dp2.payment_period_start
-      AND x.week_end = dp2.payment_period_end
     WHERE dp2.organization_id = p_org_id
-    GROUP BY dp2.id
   ) agg
   WHERE dp.id = agg.id AND dp.organization_id = p_org_id;
 

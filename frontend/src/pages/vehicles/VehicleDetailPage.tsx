@@ -38,15 +38,6 @@ function formatDate(value: string | null | undefined): string {
   }
 }
 
-function rentalDays(start: string | null | undefined, end: string | null | undefined): number {
-  if (!start || !end) return 0;
-  const s = new Date(start);
-  const e = new Date(end);
-  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0;
-  const diff = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
-  return diff > 0 ? diff : 0;
-}
-
 const STATUS_COLORS: Record<string, string> = {
   available: "bg-green-100 text-green-800",
   rented: "bg-blue-100 text-blue-800",
@@ -368,7 +359,7 @@ export function VehicleDetailPage() {
                           <div className="inline-flex items-center gap-1.5">
                             <span>{formatCurrency(Number(r.total_rent_amount))}</span>
                             <Tooltip
-                              content={`Rental: ${formatCurrency(Number(r.total_rent_amount))} (${formatDate(r.rental_start_date)}-${formatDate(r.rental_end_date)})\nProration preview: ${rentalDays(r.rental_start_date, r.rental_end_date) > 0 ? formatCurrency(Number(r.total_rent_amount) / rentalDays(r.rental_start_date, r.rental_end_date)) : "—"} per day`}
+                              content={`Contract total: ${formatCurrency(Number(r.total_rent_amount))} (${formatDate(r.rental_start_date)}–${formatDate(r.rental_end_date)}). Earnings use this full amount when trips fall in the rental window (not divided by days).`}
                               align="right"
                             />
                           </div>

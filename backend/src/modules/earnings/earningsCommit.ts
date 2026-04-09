@@ -212,9 +212,16 @@ export async function runEarningsCommitFromStaging(
 
   const feeByDriverRes = await client.query<{ driver_id: string; s: string }>(
     `SELECT driver_id::text,
-            COALESCE(SUM(vehicle_rental_fee), 0)::text AS s
-       FROM earnings_records
-       WHERE import_id = $1::uuid
+            COALESCE(SUM(mx), 0)::text AS s
+       FROM (
+         SELECT driver_id,
+                MAX(vehicle_rental_fee) AS mx
+           FROM earnings_records
+          WHERE import_id = $1::uuid
+            AND vehicle_rental_id IS NOT NULL
+            AND vehicle_rental_fee IS NOT NULL
+          GROUP BY driver_id, vehicle_rental_id
+       ) t
        GROUP BY driver_id`,
     [importId],
   );

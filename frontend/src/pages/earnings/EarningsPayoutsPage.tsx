@@ -283,9 +283,8 @@ export function EarningsPayoutsPage() {
                           {(() => {
                             const d = detailsByPayoutId.get(row.id);
                             if (!d || !d.rental_amount || !d.rental_start_date || !d.rental_end_date) return null;
-                            const pct = Number(d.overlap_pct ?? "0");
-                            const pctText = Number.isFinite(pct) ? `${pct.toFixed(0)}%` : "—";
-                            const content = `Weekly Rental: ${formatCurrency(Number(d.rental_amount))} (${d.rental_start_date.slice(0, 10)}-${d.rental_end_date.slice(0, 10)})\nProrated: ${formatCurrency(Number(row.vehicle_rental_fee))} (${pctText} overlap)`;
+                            const typeLabel = d.rental_type ? `${d.rental_type} ` : "";
+                            const content = `${typeLabel}Rental: ${formatCurrency(Number(d.rental_amount))} (${d.rental_start_date.slice(0, 10)}–${d.rental_end_date.slice(0, 10)})\nPayout vehicle line: ${formatCurrency(Number(row.vehicle_rental_fee))} (full contract per rental, counted once per rental in the period)`;
                             return <Tooltip content={content} align="right" />;
                           })()}
                         </div>
