@@ -193,6 +193,13 @@ export function DashboardPage() {
               value={formatCurrency(stats.pendingPayments ?? 0)}
               icon={<CurrencyIcon />}
             />
+            <Link to="/earnings/payouts" className="block rounded-xl hover:shadow-lg transition-shadow">
+              <AnalyticsCard
+                title="Vehicle rental fees (payouts)"
+                value={formatCurrency(stats.totalVehicleRentalFees ?? 0)}
+                icon={<VehicleIcon />}
+              />
+            </Link>
           </div>
         </section>
 

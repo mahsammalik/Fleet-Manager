@@ -7,7 +7,9 @@ import {
   commitEarningsImport,
   cancelEarningsImport,
   type EarningsPreviewResponse,
+  type EarningsCommitResponse,
 } from "../../api/earningsImport";
+import { syncEarningsVehicleRentals } from "../../api/earnings";
 import { getEarningsImports } from "../../api/earnings";
 import { formatCurrency } from "../../utils/currency";
 
@@ -60,6 +62,7 @@ export function EarningsImportPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [importSuccess, setImportSuccess] = useState<EarningsCommitResponse | null>(null);
 
   const [preview, setPreview] = useState<EarningsPreviewResponse | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -87,6 +90,7 @@ export function EarningsImportPage() {
     mutationFn: (file: File) => previewEarningsImport(file),
     onSuccess: (res) => {
       setLocalError(null);
+      setImportSuccess(null);
       setPreview(res.data);
     },
     onError: (e) => {
@@ -102,8 +106,19 @@ export function EarningsImportPage() {
         weekStart: args.weekStart,
         weekEnd: args.weekEnd,
       }),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      setImportSuccess(res.data);
       setPreview(null);
+      setLocalError(null);
+      void queryClient.invalidateQueries({ queryKey: ["earnings"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
+    },
+    onError: (e) => setLocalError(errMessage(e)),
+  });
+
+  const syncMut = useMutation({
+    mutationFn: () => syncEarningsVehicleRentals(),
+    onSuccess: () => {
       setLocalError(null);
       void queryClient.invalidateQueries({ queryKey: ["earnings"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
@@ -138,7 +153,7 @@ export function EarningsImportPage() {
     [handleFile],
   );
 
-  const busy = previewMut.isPending || commitMut.isPending || cancelMut.isPending;
+  const busy = previewMut.isPending || commitMut.isPending || cancelMut.isPending || syncMut.isPending;
   const confidencePct =
     preview?.detectionConfidence != null ? Math.round(preview.detectionConfidence * 100) : null;
   const periodValid =
@@ -160,6 +175,22 @@ export function EarningsImportPage() {
       <div className="flex-1 p-4 sm:p-6 space-y-8 max-w-4xl mx-auto w-full">
         {localError && (
           <div className="rounded-xl bg-red-50 text-red-800 text-sm px-4 py-3 border border-red-100">{localError}</div>
+        )}
+
+        {importSuccess && (
+          <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/70 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.06)] px-4 py-3 text-sm text-emerald-900">
+            <p className="font-medium">Import complete</p>
+            <p className="mt-1 text-emerald-800/90">
+              {importSuccess.insertedRows} row(s) saved.
+              {typeof importSuccess.autoMatchedVehicleRentals === "number" && (
+                <>
+                  {" "}
+                  Auto-matched {importSuccess.autoMatchedVehicleRentals} vehicle rental
+                  {importSuccess.autoMatchedVehicleRentals === 1 ? "" : "s"}.
+                </>
+              )}
+            </p>
+          </div>
         )}
 
         {!preview && (
@@ -372,7 +403,17 @@ export function EarningsImportPage() {
         )}
 
         <section>
-          <h2 className="text-sm font-semibold text-slate-800 mb-3">Recent imports</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 className="text-sm font-semibold text-slate-800">Recent imports</h2>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => syncMut.mutate()}
+              className="rounded-lg border border-slate-300 bg-white/80 text-slate-700 text-xs font-medium px-3 py-2 min-h-[36px] hover:bg-slate-50 disabled:opacity-50"
+            >
+              {syncMut.isPending ? "Re-syncing…" : "Re-sync vehicle rentals"}
+            </button>
+          </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200/80 bg-white/60 backdrop-blur-sm shadow-sm">
             {importsQuery.isLoading ? (
               <p className="p-4 text-sm text-slate-500">Loading…</p>

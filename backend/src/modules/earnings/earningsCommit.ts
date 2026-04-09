@@ -21,6 +21,7 @@ export type EarningsCommitResult = {
   skippedNoDate: number;
   skippedNoMoney: number;
   totals: EarningsCommitTotals;
+  autoMatchedVehicleRentals: number;
 };
 
 async function loadMatchIndex(orgId: string): Promise<DriverMatchIndex> {
@@ -209,9 +210,30 @@ export async function runEarningsCommitFromStaging(
     [importId, toInsert.length, totals.gross, totals.trips],
   );
 
+  const feeByDriverRes = await client.query<{ driver_id: string; s: string }>(
+    `SELECT driver_id::text,
+            COALESCE(SUM(vehicle_rental_fee), 0)::text AS s
+       FROM earnings_records
+       WHERE import_id = $1::uuid
+       GROUP BY driver_id`,
+    [importId],
+  );
+  const vehicleFeeByDriver = new Map<string, number>();
+  for (const row of feeByDriverRes.rows) {
+    vehicleFeeByDriver.set(row.driver_id, parseFloat(row.s) || 0);
+  }
+
   const byDriver = new Map<
     string,
- { gross: number; fee: number; net: number; comm: number; payout: number; dailyCash: number }
+    {
+      gross: number;
+      fee: number;
+      net: number;
+      comm: number;
+      payout: number;
+      dailyCash: number;
+      vehicleRentalFee: number;
+    }
   >();
   for (const r of toInsert) {
     const cur = byDriver.get(r.driver_id) ?? {
@@ -221,6 +243,7 @@ export async function runEarningsCommitFromStaging(
       comm: 0,
       payout: 0,
       dailyCash: 0,
+      vehicleRentalFee: 0,
     };
     cur.gross += r.gross ?? 0;
     cur.fee += r.fee ?? 0;
@@ -230,6 +253,9 @@ export async function runEarningsCommitFromStaging(
     cur.dailyCash += r.daily_cash ?? 0;
     byDriver.set(r.driver_id, cur);
   }
+  for (const [driverId, agg] of byDriver) {
+    agg.vehicleRentalFee = vehicleFeeByDriver.get(driverId) ?? 0;
+  }
 
   for (const [driverId, agg] of byDriver) {
     await client.query(
@@ -237,8 +263,8 @@ export async function runEarningsCommitFromStaging(
           organization_id, driver_id, payment_period_start, payment_period_end,
           total_gross_earnings, total_platform_fees, total_net_earnings,
           total_daily_cash,
-          company_commission, net_driver_payout, payment_status
-        ) VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10, 'pending')
+          company_commission, net_driver_payout, vehicle_rental_fee, payment_status
+        ) VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10, $11, 'pending')
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
         DO UPDATE SET
           total_gross_earnings = COALESCE(driver_payouts.total_gross_earnings, 0) + EXCLUDED.total_gross_earnings,
@@ -246,7 +272,8 @@ export async function runEarningsCommitFromStaging(
           total_net_earnings = COALESCE(driver_payouts.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
           total_daily_cash = COALESCE(driver_payouts.total_daily_cash, 0) + EXCLUDED.total_daily_cash,
           company_commission = COALESCE(driver_payouts.company_commission, 0) + EXCLUDED.company_commission,
-          net_driver_payout = COALESCE(driver_payouts.net_driver_payout, 0) + EXCLUDED.net_driver_payout`,
+          net_driver_payout = COALESCE(driver_payouts.net_driver_payout, 0) + EXCLUDED.net_driver_payout,
+          vehicle_rental_fee = COALESCE(driver_payouts.vehicle_rental_fee, 0) + EXCLUDED.vehicle_rental_fee`,
       [
         orgId,
         driverId,
@@ -258,9 +285,16 @@ export async function runEarningsCommitFromStaging(
         agg.dailyCash,
         agg.comm,
         agg.payout,
+        agg.vehicleRentalFee,
       ],
     );
   }
+
+  const matchRes = await client.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c FROM earnings_records WHERE import_id = $1::uuid AND vehicle_rental_id IS NOT NULL`,
+    [importId],
+  );
+  const autoMatchedVehicleRentals = parseInt(matchRes.rows[0]?.c ?? "0", 10);
 
   await client.query(`DELETE FROM earnings_import_staging WHERE import_id = $1`, [importId]);
 
@@ -270,5 +304,6 @@ export async function runEarningsCommitFromStaging(
     skippedNoDate,
     skippedNoMoney,
     totals,
+    autoMatchedVehicleRentals,
   };
 }

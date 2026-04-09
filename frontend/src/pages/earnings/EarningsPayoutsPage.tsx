@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { useAuthStore } from "../../store/authStore";
-import { bulkUpdatePayouts, getEarningsPayouts } from "../../api/earnings";
+import { bulkUpdatePayouts, getEarningsPayouts, getPayoutsWithProrationDetails } from "../../api/earnings";
 import { formatCurrency } from "../../utils/currency";
+import { Tooltip } from "../../components/UI/Tooltip";
 
 function errMessage(e: unknown): string {
   if (axios.isAxiosError(e)) {
@@ -17,6 +19,10 @@ function errMessage(e: unknown): string {
 export function EarningsPayoutsPage() {
   const user = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const driverIdFromUrl =
+    searchParams.get("driverId")?.trim() || searchParams.get("driver_id")?.trim() || undefined;
+
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
   const [from, setFrom] = useState("");
@@ -26,7 +32,7 @@ export function EarningsPayoutsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const query = useQuery({
-    queryKey: ["earnings", "payouts", page, status, from, to, q],
+    queryKey: ["earnings", "payouts", page, status, from, to, q, driverIdFromUrl],
     queryFn: () =>
       getEarningsPayouts({
         page,
@@ -35,12 +41,32 @@ export function EarningsPayoutsPage() {
         from: from || undefined,
         to: to || undefined,
         q: q.trim() || undefined,
+        driverId: driverIdFromUrl,
       }).then((r) => r.data),
     enabled: user?.role === "admin" || user?.role === "accountant",
   });
 
   const items = query.data?.items ?? [];
   const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / (query.data?.pageSize ?? 25)));
+
+  const detailsQuery = useQuery({
+    queryKey: ["earnings", "payout-proration-details", page, status, from, to, q, driverIdFromUrl],
+    queryFn: () =>
+      getPayoutsWithProrationDetails({
+        page,
+        pageSize: 25,
+        status: status || undefined,
+        from: from || undefined,
+        to: to || undefined,
+        q: q.trim() || undefined,
+        driverId: driverIdFromUrl,
+      }).then((r) => r.data),
+    enabled: user?.role === "admin" || user?.role === "accountant",
+  });
+  const detailsByPayoutId = useMemo(
+    () => new Map((detailsQuery.data?.items ?? []).map((d) => [d.payout_id, d])),
+    [detailsQuery.data?.items],
+  );
 
   const allIds = useMemo(() => items.map((r) => r.id), [items]);
   const allSelected = items.length > 0 && items.every((r) => selected.has(r.id));
@@ -90,6 +116,25 @@ export function EarningsPayoutsPage() {
 
       <div className="flex-1 p-4 sm:p-6 space-y-4">
         {error && <div className="rounded-lg bg-red-50 text-red-800 text-sm px-3 py-2">{error}</div>}
+
+        {driverIdFromUrl && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-sm text-sky-900">
+            <span>Showing payouts for one driver (from vehicles or direct link).</span>
+            <button
+              type="button"
+              className="text-sky-700 font-medium hover:underline"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete("driverId");
+                next.delete("driver_id");
+                setSearchParams(next);
+                setPage(1);
+              }}
+            >
+              Clear driver filter
+            </button>
+          </div>
+        )}
 
         <div className="flex flex-col lg:flex-row flex-wrap gap-3 items-stretch lg:items-end">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1">
@@ -203,6 +248,7 @@ export function EarningsPayoutsPage() {
                   <th className="px-3 py-2">Driver</th>
                   <th className="px-3 py-2">Period</th>
                   <th className="px-3 py-2">Net payout</th>
+                  <th className="px-3 py-2">Vehicle rental</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Paid</th>
                 </tr>
@@ -229,6 +275,23 @@ export function EarningsPayoutsPage() {
                     </td>
                     <td className="px-3 py-2 tabular-nums">
                       {row.net_driver_payout != null ? formatCurrency(Number(row.net_driver_payout)) : "—"}
+                    </td>
+                    <td className="px-3 py-2 tabular-nums text-slate-700">
+                      {row.vehicle_rental_fee != null && Number(row.vehicle_rental_fee) !== 0 ? (
+                        <div className="inline-flex items-center gap-1.5">
+                          <span>{formatCurrency(Number(row.vehicle_rental_fee))}</span>
+                          {(() => {
+                            const d = detailsByPayoutId.get(row.id);
+                            if (!d || !d.rental_amount || !d.rental_start_date || !d.rental_end_date) return null;
+                            const pct = Number(d.overlap_pct ?? "0");
+                            const pctText = Number.isFinite(pct) ? `${pct.toFixed(0)}%` : "—";
+                            const content = `Weekly Rental: ${formatCurrency(Number(d.rental_amount))} (${d.rental_start_date.slice(0, 10)}-${d.rental_end_date.slice(0, 10)})\nProrated: ${formatCurrency(Number(row.vehicle_rental_fee))} (${pctText} overlap)`;
+                            return <Tooltip content={content} align="right" />;
+                          })()}
+                        </div>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-700">

@@ -7,6 +7,7 @@ export interface DashboardStats {
   expiredDocuments: number;
   totalCommissionEarned: number;
   pendingPayments: number;
+  totalVehicleRentalFees?: number;
   totalVehicles?: number;
   activeRentals?: number;
   overdueRentals?: number;

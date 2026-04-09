@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../../store/authStore";
 import { getEarningsOverview, getPayoutIntegrityRows } from "../../api/earnings";
 import { DriverPayoutTable } from "../../components/dashboard/DriverPayoutTable";
@@ -40,6 +42,16 @@ function DonutRing(props: {
 
 export function EarningsOverviewPage() {
   const user = useAuthStore((s) => s.user);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const driverFilter =
+    searchParams.get("driver_id")?.trim() || searchParams.get("driverId")?.trim() || "";
+
+  useEffect(() => {
+    if (!driverFilter) return;
+    navigate(`/earnings/payouts?driverId=${encodeURIComponent(driverFilter)}`, { replace: true });
+  }, [driverFilter, navigate]);
+
   const overviewQuery = useQuery({
     queryKey: ["earnings", "overview"],
     queryFn: () => getEarningsOverview().then((r) => r.data),

@@ -298,6 +298,7 @@ router.post("/import/commit", async (req, res) => {
       skippedNoDate: commitResult.skippedNoDate,
       skippedNoMoney: commitResult.skippedNoMoney,
       totals: commitResult.totals,
+      autoMatchedVehicleRentals: commitResult.autoMatchedVehicleRentals,
     });
   } catch (err) {
     try {
@@ -332,6 +333,45 @@ router.delete("/import/:id", async (req, res) => {
     // eslint-disable-next-line no-console
     console.error("Earnings cancel error", err);
     return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+router.post("/sync-vehicles", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const body = req.body as { importId?: unknown; driverId?: unknown };
+  const importId =
+    typeof body.importId === "string" && UUID_RE.test(body.importId) ? body.importId : null;
+  const driverId =
+    typeof body.driverId === "string" && UUID_RE.test(body.driverId) ? body.driverId : null;
+
+  try {
+    const touchResult = await pool.query(
+      `UPDATE earnings_records er
+       SET trip_date = er.trip_date
+       FROM earnings_imports ei
+       WHERE er.import_id = ei.id AND ei.organization_id = $1::uuid
+         AND ($2::uuid IS NULL OR er.import_id = $2::uuid)
+         AND ($3::uuid IS NULL OR er.driver_id = $3::uuid)`,
+      [orgId, importId, driverId],
+    );
+    const refreshRes = await pool.query<{ n: string }>(
+      `SELECT refresh_driver_payout_vehicle_fees($1::uuid)::text AS n`,
+      [orgId],
+    );
+    const updatedPayouts = parseInt(refreshRes.rows[0]?.n ?? "0", 10);
+    return res.json({
+      retouchedRecords: touchResult.rowCount ?? 0,
+      updatedPayouts,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings sync-vehicles error", err);
+    return res.status(500).json({ message: "Sync failed" });
   }
 });
 
@@ -557,6 +597,8 @@ router.get("/records/payout-integrity", async (req, res) => {
       total_transfer_earnings: string | null;
       account_opening_fee: string | null;
       transfer_commission: string | null;
+      vehicle_rental_fee: string | null;
+      vehicle_rental_id: string | null;
       expected_payout: string | null;
       ok: boolean;
     }>(
@@ -571,6 +613,8 @@ router.get("/records/payout-integrity", async (req, res) => {
          er.total_transfer_earnings::text AS total_transfer_earnings,
          er.account_opening_fee::text AS account_opening_fee,
          er.transfer_commission::text AS transfer_commission,
+         er.vehicle_rental_fee::text,
+         er.vehicle_rental_id::text,
          GREATEST(
            0,
            ROUND(
@@ -635,6 +679,10 @@ router.get("/payouts", async (req, res) => {
   const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
   const qSearch =
     typeof req.query.q === "string" && req.query.q.trim() !== "" ? `%${req.query.q.trim()}%` : null;
+  const driverIdFilter =
+    typeof req.query.driverId === "string" && UUID_RE.test(req.query.driverId)
+      ? req.query.driverId
+      : null;
 
   try {
     const where: string[] = ["dp.organization_id = $1"];
@@ -651,6 +699,10 @@ router.get("/payouts", async (req, res) => {
     if (to) {
       where.push(`dp.payment_period_start <= $${p++}::date`);
       params.push(to);
+    }
+    if (driverIdFilter) {
+      where.push(`dp.driver_id = $${p++}::uuid`);
+      params.push(driverIdFilter);
     }
     if (qSearch) {
       where.push(
@@ -675,6 +727,7 @@ router.get("/payouts", async (req, res) => {
       `SELECT dp.id::text, dp.driver_id::text, dp.payment_period_start::text, dp.payment_period_end::text,
               dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
               dp.total_gross_earnings::text, dp.company_commission::text,
+              dp.vehicle_rental_fee::text,
               d.first_name, d.last_name, d.phone
        FROM driver_payouts dp
        INNER JOIN drivers d ON d.id = dp.driver_id
@@ -689,6 +742,94 @@ router.get("/payouts", async (req, res) => {
     // eslint-disable-next-line no-console
     console.error("Earnings payouts list error", err);
     return res.status(500).json({ message: "Failed to list payouts" });
+  }
+});
+
+router.get("/payouts/with-proration-details", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize ?? "25"), 10) || 25));
+  const offset = (page - 1) * pageSize;
+  const statusRaw = req.query.status != null && String(req.query.status).trim() !== "" ? String(req.query.status) : null;
+  const status = statusRaw && PAY_STATUSES.has(statusRaw) ? statusRaw : null;
+  const from = typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
+  const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
+  const qSearch =
+    typeof req.query.q === "string" && req.query.q.trim() !== "" ? `%${req.query.q.trim()}%` : null;
+  const driverIdFilter =
+    typeof req.query.driverId === "string" && UUID_RE.test(req.query.driverId)
+      ? req.query.driverId
+      : null;
+
+  try {
+    const where: string[] = ["dp.organization_id = $1"];
+    const params: unknown[] = [orgId];
+    let p = 2;
+    if (status) {
+      where.push(`dp.payment_status = $${p++}`);
+      params.push(status);
+    }
+    if (from) {
+      where.push(`dp.payment_period_end >= $${p++}::date`);
+      params.push(from);
+    }
+    if (to) {
+      where.push(`dp.payment_period_start <= $${p++}::date`);
+      params.push(to);
+    }
+    if (driverIdFilter) {
+      where.push(`dp.driver_id = $${p++}::uuid`);
+      params.push(driverIdFilter);
+    }
+    if (qSearch) {
+      where.push(
+        `(d.first_name ILIKE $${p} OR d.last_name ILIKE $${p} OR d.phone ILIKE $${p} OR CONCAT(d.first_name, ' ', d.last_name) ILIKE $${p})`,
+      );
+      params.push(qSearch);
+      p++;
+    }
+    const whereSql = where.join(" AND ");
+    params.push(pageSize, offset);
+
+    const { rows } = await pool.query(
+      `SELECT
+          dp.id::text AS payout_id,
+          dp.vehicle_rental_fee::text AS vehicle_rental_fee,
+          vr.id::text AS vehicle_rental_id,
+          vr.total_rent_amount::text AS rental_amount,
+          vr.rental_start_date::text AS rental_start_date,
+          vr.rental_end_date::text AS rental_end_date,
+          vr.rental_type,
+          CASE
+            WHEN COALESCE(vr.total_rent_amount, 0) > 0 AND COALESCE(dp.vehicle_rental_fee, 0) > 0
+              THEN ROUND((dp.vehicle_rental_fee / vr.total_rent_amount) * 100.0, 2)::text
+            ELSE NULL
+          END AS overlap_pct
+        FROM driver_payouts dp
+        INNER JOIN drivers d ON d.id = dp.driver_id
+        LEFT JOIN LATERAL (
+          SELECT v.*
+          FROM vehicle_rentals v
+          WHERE v.organization_id = dp.organization_id
+            AND v.driver_id = dp.driver_id
+            AND v.rental_start_date <= dp.payment_period_end
+            AND v.rental_end_date >= dp.payment_period_start
+          ORDER BY v.rental_start_date DESC, v.id
+          LIMIT 1
+        ) vr ON true
+        WHERE ${whereSql}
+        ORDER BY dp.payment_period_end DESC, dp.created_at DESC
+        LIMIT $${p} OFFSET $${p + 1}`,
+      params,
+    );
+
+    return res.json({ items: rows, page, pageSize });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings payouts proration details error", err);
+    return res.status(500).json({ message: "Failed to load proration details" });
   }
 });
 
@@ -746,6 +887,7 @@ type PayoutExportRow = {
   payment_period_start: string;
   payment_period_end: string;
   net_driver_payout: string | null;
+  vehicle_rental_fee: string | null;
   payment_status: string;
   payment_date: string | null;
   first_name: string;
@@ -759,6 +901,7 @@ async function fetchPayoutExportRows(
   from: string | null,
   to: string | null,
   q: string | null,
+  driverId: string | null,
 ): Promise<PayoutExportRow[]> {
   const where: string[] = ["dp.organization_id = $1"];
   const params: unknown[] = [orgId];
@@ -775,6 +918,10 @@ async function fetchPayoutExportRows(
     where.push(`dp.payment_period_start <= $${p++}::date`);
     params.push(to);
   }
+  if (driverId) {
+    where.push(`dp.driver_id = $${p++}::uuid`);
+    params.push(driverId);
+  }
   if (q) {
     const qq = `%${q.trim()}%`;
     where.push(
@@ -786,7 +933,7 @@ async function fetchPayoutExportRows(
   const whereSql = where.join(" AND ");
   const { rows } = await pool.query<PayoutExportRow>(
     `SELECT dp.id::text, dp.driver_id::text, dp.payment_period_start::text, dp.payment_period_end::text,
-            dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
+            dp.net_driver_payout::text, dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
             d.first_name, d.last_name, d.phone
      FROM driver_payouts dp
      INNER JOIN drivers d ON d.id = dp.driver_id
@@ -807,9 +954,11 @@ router.get("/reports/export", async (req, res) => {
   const from = typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
   const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
   const q = typeof req.query.q === "string" && req.query.q.trim() !== "" ? req.query.q : null;
+  const driverIdExport =
+    typeof req.query.driverId === "string" && UUID_RE.test(req.query.driverId) ? req.query.driverId : null;
 
   try {
-    const rows = await fetchPayoutExportRows(orgId, status, from, to, q);
+    const rows = await fetchPayoutExportRows(orgId, status, from, to, q, driverIdExport);
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const header = [
       "id",
@@ -820,6 +969,7 @@ router.get("/reports/export", async (req, res) => {
       "period_start",
       "period_end",
       "net_payout",
+      "vehicle_rental_fee",
       "status",
       "paid_date",
     ];
@@ -835,6 +985,7 @@ router.get("/reports/export", async (req, res) => {
           r.payment_period_start,
           r.payment_period_end,
           r.net_driver_payout ?? "",
+          r.vehicle_rental_fee ?? "",
           r.payment_status,
           r.payment_date ?? "",
         ].join(","),

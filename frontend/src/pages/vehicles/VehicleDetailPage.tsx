@@ -23,6 +23,7 @@ import {
 import { getDrivers } from "../../api/drivers";
 import { useAuthStore } from "../../store/authStore";
 import { formatCurrency } from "../../utils/currency";
+import { Tooltip } from "../../components/UI/Tooltip";
 
 type TabId = "profile" | "rentals" | "maintenance" | "documents";
 
@@ -35,6 +36,15 @@ function formatDate(value: string | null | undefined): string {
   } catch {
     return "—";
   }
+}
+
+function rentalDays(start: string | null | undefined, end: string | null | undefined): number {
+  if (!start || !end) return 0;
+  const s = new Date(start);
+  const e = new Date(end);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0;
+  const diff = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
+  return diff > 0 ? diff : 0;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -337,15 +347,35 @@ export function VehicleDetailPage() {
                   {rentals.map((r: VehicleRental) => (
                     <tr key={r.id} className="border-t border-slate-100">
                       <td className="px-3 py-2">
-                        <Link to={`/drivers/${r.driver_id}`} className="text-sky-600 hover:underline">
-                          {r.driver_first_name} {r.driver_last_name}
-                        </Link>
+                        <div className="flex flex-col gap-0.5">
+                          <Link to={`/drivers/${r.driver_id}`} className="text-sky-600 hover:underline">
+                            {r.driver_first_name} {r.driver_last_name}
+                          </Link>
+                          <Link
+                            to={`/earnings/payouts?driverId=${encodeURIComponent(r.driver_id)}`}
+                            className="text-xs text-slate-500 hover:text-sky-600"
+                          >
+                            Earnings payouts
+                          </Link>
+                        </div>
                       </td>
                       <td className="px-3 py-2">
                         {formatDate(r.rental_start_date)} – {formatDate(r.rental_end_date)}
                       </td>
                       <td className="px-3 py-2 capitalize">{r.rental_type}</td>
-                      <td className="px-3 py-2">{r.total_rent_amount != null ? formatCurrency(Number(r.total_rent_amount)) : "—"}</td>
+                      <td className="px-3 py-2">
+                        {r.total_rent_amount != null ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <span>{formatCurrency(Number(r.total_rent_amount))}</span>
+                            <Tooltip
+                              content={`Rental: ${formatCurrency(Number(r.total_rent_amount))} (${formatDate(r.rental_start_date)}-${formatDate(r.rental_end_date)})\nProration preview: ${rentalDays(r.rental_start_date, r.rental_end_date) > 0 ? formatCurrency(Number(r.total_rent_amount) / rentalDays(r.rental_start_date, r.rental_end_date)) : "—"} per day`}
+                              align="right"
+                            />
+                          </div>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td className="px-3 py-2">
                         {r.deposit_amount ? formatCurrency(Number(r.deposit_amount)) : "—"}
                         {r.deposit_status === "partial" && r.deposit_deduction_amount && (

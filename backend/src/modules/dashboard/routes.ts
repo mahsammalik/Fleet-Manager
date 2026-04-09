@@ -24,6 +24,7 @@ router.get("/stats", async (req, res) => {
       overdueRentalsRes,
       totalCommissionRes,
       pendingPaymentsRes,
+      vehicleRentalFeesRes,
     ] = await Promise.all([
       query<{ count: string }>("SELECT COUNT(*) as count FROM drivers WHERE organization_id = $1", [orgId]),
       query<{ count: string }>(
@@ -67,6 +68,12 @@ router.get("/stats", async (req, res) => {
          WHERE organization_id = $1 AND payment_status = 'pending'`,
         [orgId],
       ),
+      query<{ total: string | null }>(
+        `SELECT COALESCE(SUM(vehicle_rental_fee), 0)::text as total
+         FROM driver_payouts
+         WHERE organization_id = $1`,
+        [orgId],
+      ),
     ]);
 
     const totalDrivers = parseInt(driversRes.rows[0]?.count ?? "0", 10);
@@ -78,6 +85,7 @@ router.get("/stats", async (req, res) => {
     const overdueRentals = parseInt(overdueRentalsRes.rows[0]?.count ?? "0", 10);
     const totalCommissionEarned = parseFloat(totalCommissionRes.rows[0]?.total ?? "0");
     const pendingPayments = parseFloat(pendingPaymentsRes.rows[0]?.total ?? "0");
+    const totalVehicleRentalFees = parseFloat(vehicleRentalFeesRes.rows[0]?.total ?? "0");
 
     return res.json({
       totalDrivers,
@@ -89,6 +97,7 @@ router.get("/stats", async (req, res) => {
       overdueRentals,
       totalCommissionEarned,
       pendingPayments,
+      totalVehicleRentalFees,
     });
   } catch (err) {
     // eslint-disable-next-line no-console

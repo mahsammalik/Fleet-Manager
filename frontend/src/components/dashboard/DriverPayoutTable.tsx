@@ -41,6 +41,9 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
               </th>
               <th className="px-2 py-2">Tfr comm</th>
               <th className="px-2 py-2">Cash Commission</th>
+              <th className="px-2 py-2" title="Pro-rated from vehicle rental when trip falls in rental period">
+                Vehicle rental
+              </th>
               <th className="px-2 py-2">Driver Payout</th>
               <th className="px-2 py-2">Expected</th>
               <th className="px-2 py-2">Delta</th>
@@ -75,6 +78,11 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
                   </td>
                   <td className="px-2 py-2">{formatCurrency(toNum(r.transfer_commission))}</td>
                   <td className="px-2 py-2">{formatCurrency(toNum(r.cash_commission))}</td>
+                  <td className="px-2 py-2 text-slate-600">
+                    {r.vehicle_rental_fee != null && toNum(r.vehicle_rental_fee) !== 0
+                      ? formatCurrency(toNum(r.vehicle_rental_fee))
+                      : "—"}
+                  </td>
                   <td className="px-2 py-2">{formatCurrency(payout)}</td>
                   <td className="px-2 py-2">{formatCurrency(expected)}</td>
                   <td className={`px-2 py-2 ${Math.abs(delta) > 0.009 ? "text-red-600 font-semibold" : "text-slate-600"}`}>

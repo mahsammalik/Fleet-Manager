@@ -20,6 +20,8 @@ export interface PayoutIntegrityRow {
   total_transfer_earnings: string | null;
   account_opening_fee: string | null;
   transfer_commission: string | null;
+  vehicle_rental_fee: string | null;
+  vehicle_rental_id: string | null;
   expected_payout: string | null;
   ok: boolean;
 }
@@ -49,6 +51,7 @@ export interface PayoutListItem {
   payment_period_start: string;
   payment_period_end: string;
   net_driver_payout: string | null;
+  vehicle_rental_fee: string | null;
   payment_status: string;
   payment_date: string | null;
   total_gross_earnings: string | null;
@@ -63,6 +66,17 @@ export interface EarningsPayoutsResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export interface PayoutProrationDetail {
+  payout_id: string;
+  vehicle_rental_fee: string | null;
+  vehicle_rental_id: string | null;
+  rental_amount: string | null;
+  rental_start_date: string | null;
+  rental_end_date: string | null;
+  rental_type: string | null;
+  overlap_pct: string | null;
 }
 
 export function getEarningsOverview() {
@@ -84,8 +98,24 @@ export function getEarningsPayouts(params: {
   from?: string;
   to?: string;
   q?: string;
+  driverId?: string;
 }) {
   return api.get<EarningsPayoutsResponse>("/earnings/payouts", { params });
+}
+
+export function getPayoutsWithProrationDetails(params: {
+  page?: number;
+  pageSize?: number;
+  status?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+  driverId?: string;
+}) {
+  return api.get<{ items: PayoutProrationDetail[]; page: number; pageSize: number }>(
+    "/earnings/payouts/with-proration-details",
+    { params },
+  );
 }
 
 export function bulkUpdatePayouts(body: {
@@ -98,9 +128,19 @@ export function bulkUpdatePayouts(body: {
   return api.patch<{ updatedRows: number }>("/earnings/payouts/bulk", body);
 }
 
-export function downloadEarningsReportCsv(params: { from?: string; to?: string; q?: string; status?: string }) {
+export function downloadEarningsReportCsv(params: {
+  from?: string;
+  to?: string;
+  q?: string;
+  status?: string;
+  driverId?: string;
+}) {
   return api.get<Blob>("/earnings/reports/export", {
     params: { ...params, format: "csv" },
     responseType: "blob",
   });
+}
+
+export function syncEarningsVehicleRentals(body?: { importId?: string; driverId?: string }) {
+  return api.post<{ retouchedRecords: number; updatedPayouts: number }>("/earnings/sync-vehicles", body ?? {});
 }
