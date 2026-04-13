@@ -2,6 +2,32 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 
+const EARNINGS_EXT = [".csv", ".xlsx", ".xls", ".zip", ".xml", ".pdf"];
+const EARNINGS_MIMES = [
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/zip",
+  "application/xml",
+  "text/xml",
+  "application/pdf",
+];
+const EARNINGS_MAX = 40 * 1024 * 1024;
+
+export const earningsUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: EARNINGS_MAX },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const ok =
+      EARNINGS_EXT.includes(ext) ||
+      EARNINGS_MIMES.includes(file.mimetype) ||
+      (file.mimetype === "application/octet-stream" && EARNINGS_EXT.includes(ext));
+    if (ok) cb(null, true);
+    else cb(new Error("Earnings upload: allowed types are CSV, XLSX, XLS, ZIP, XML, PDF"));
+  },
+});
+
 const uploadRoot = path.join(process.cwd(), "uploads", "driver-documents");
 const vehicleUploadRoot = path.join(process.cwd(), "uploads", "vehicle-documents");
 

@@ -132,11 +132,22 @@ CREATE TABLE IF NOT EXISTS earnings_imports (
     import_date DATE NOT NULL,
     week_start DATE NOT NULL,
     week_end DATE NOT NULL,
-    platform VARCHAR(50) NOT NULL CHECK (platform IN ('uber', 'bolt')),
+    platform VARCHAR(50) NOT NULL CHECK (platform IN ('uber', 'bolt', 'glovo', 'bolt_courier', 'wolt_courier')),
     total_gross DECIMAL(12, 2),
     total_trips INTEGER,
     record_count INTEGER,
     imported_by UUID REFERENCES users(id),
+    status VARCHAR(50) NOT NULL DEFAULT 'completed' CHECK (status IN ('preview', 'completed', 'failed')),
+    detection_meta JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS earnings_import_staging (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    import_id UUID NOT NULL REFERENCES earnings_imports(id) ON DELETE CASCADE,
+    row_index INTEGER NOT NULL,
+    payload JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -149,15 +160,42 @@ CREATE TABLE IF NOT EXISTS earnings_records (
     trip_count INTEGER,
     gross_earnings DECIMAL(10, 2),
     platform_fee DECIMAL(10, 2),
+    -- Net after fleet commission on import (matches driver_payout; not raw platform net)
     net_earnings DECIMAL(10, 2),
+    total_transfer_earnings DECIMAL(10, 2),
+    daily_cash DECIMAL(10, 2),
+    account_opening_fee DECIMAL(10, 2),
+    transfer_commission DECIMAL(10, 2),
+    cash_commission DECIMAL(10, 2),
+    has_cash_commission BOOLEAN GENERATED ALWAYS AS (COALESCE(cash_commission, 0) < 0) STORED,
     company_commission DECIMAL(10, 2),
     driver_payout DECIMAL(10, 2),
+    driver_payout_after_cash DECIMAL(10, 2)
+      GENERATED ALWAYS AS (
+        GREATEST(
+          0,
+          ROUND(
+            (
+              COALESCE(
+                total_transfer_earnings,
+                net_earnings,
+                COALESCE(gross_earnings, 0) - COALESCE(platform_fee, 0),
+                gross_earnings,
+                0
+              ) - ABS(COALESCE(transfer_commission, 0)) - ABS(COALESCE(cash_commission, 0))
+            )::numeric,
+            2
+          )
+        )
+      ) STORED,
     commission_type VARCHAR(50),
+    vehicle_rental_id UUID,
+    vehicle_rental_fee DECIMAL(10, 2),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Driver payments
-CREATE TABLE IF NOT EXISTS driver_payments (
+-- Driver payouts (period rollups)
+CREATE TABLE IF NOT EXISTS driver_payouts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
     driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
@@ -166,11 +204,14 @@ CREATE TABLE IF NOT EXISTS driver_payments (
     total_gross_earnings DECIMAL(12, 2),
     total_platform_fees DECIMAL(10, 2),
     total_net_earnings DECIMAL(12, 2),
+    total_daily_cash DECIMAL(12, 2) DEFAULT 0,
     company_commission DECIMAL(10, 2),
     bonuses DECIMAL(10, 2) DEFAULT 0,
     penalties DECIMAL(10, 2) DEFAULT 0,
     adjustments DECIMAL(10, 2) DEFAULT 0,
     net_driver_payout DECIMAL(10, 2),
+    vehicle_rental_id UUID,
+    vehicle_rental_fee DECIMAL(12, 2) DEFAULT 0,
     payment_status VARCHAR(50) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'approved', 'paid', 'hold')),
     payment_date DATE,
     payment_method VARCHAR(50),
@@ -183,12 +224,17 @@ CREATE TABLE IF NOT EXISTS driver_payments (
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_earnings_imports_org ON earnings_imports(organization_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_staging_import ON earnings_import_staging(import_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_staging_org ON earnings_import_staging(organization_id);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_driver ON earnings_records(driver_id);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_date ON earnings_records(trip_date);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_import ON earnings_records(import_id);
-CREATE INDEX IF NOT EXISTS idx_driver_payments_driver ON driver_payments(driver_id);
-CREATE INDEX IF NOT EXISTS idx_driver_payments_status ON driver_payments(payment_status);
-CREATE INDEX IF NOT EXISTS idx_driver_payments_period ON driver_payments(payment_period_start, payment_period_end);
+CREATE INDEX IF NOT EXISTS idx_earnings_records_vehicle_rental ON earnings_records(vehicle_rental_id)
+    WHERE vehicle_rental_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_driver ON driver_payouts(driver_id);
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_status ON driver_payouts(payment_status);
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_period ON driver_payouts(payment_period_start, payment_period_end);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_payouts_org_driver_period ON driver_payouts (organization_id, driver_id, payment_period_start, payment_period_end);
 
 -- Vehicles (company-owned, rented to drivers)
 CREATE TABLE IF NOT EXISTS vehicles (
@@ -267,6 +313,16 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_organization ON vehicle_rentals(o
 CREATE INDEX IF NOT EXISTS idx_rentals_status ON vehicle_rentals(status);
 CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_period ON vehicle_rentals(rental_start_date, rental_end_date);
 
+ALTER TABLE earnings_records DROP CONSTRAINT IF EXISTS fk_earnings_records_vehicle_rental;
+ALTER TABLE earnings_records
+    ADD CONSTRAINT fk_earnings_records_vehicle_rental
+    FOREIGN KEY (vehicle_rental_id) REFERENCES vehicle_rentals(id) ON DELETE SET NULL;
+
+ALTER TABLE driver_payouts DROP CONSTRAINT IF EXISTS fk_driver_payouts_vehicle_rental;
+ALTER TABLE driver_payouts
+    ADD CONSTRAINT fk_driver_payouts_vehicle_rental
+    FOREIGN KEY (vehicle_rental_id) REFERENCES vehicle_rentals(id) ON DELETE SET NULL;
+
 -- Deposit transactions for rentals
 CREATE TABLE IF NOT EXISTS deposit_transactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -334,5 +390,135 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_documents_type ON vehicle_documents(docum
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_expiry ON vehicle_documents(expiry_date);
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_verified ON vehicle_documents(is_verified);
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_organization ON vehicle_documents(organization_id);
+
+-- Match earnings row to vehicle rental by driver + trip_date (full total_rent_amount, or vehicle.daily_rent if amount unset).
+CREATE OR REPLACE FUNCTION earnings_records_match_vehicle_rental()
+RETURNS TRIGGER AS $$
+DECLARE
+  rid UUID;
+  v_total NUMERIC(12, 2);
+  v_vehicle_id UUID;
+  daily_rent NUMERIC(10, 2);
+BEGIN
+  IF NEW.driver_id IS NULL OR NEW.trip_date IS NULL THEN
+    NEW.vehicle_rental_id := NULL;
+    NEW.vehicle_rental_fee := NULL;
+    RETURN NEW;
+  END IF;
+
+  SELECT v.id, v.total_rent_amount, v.vehicle_id
+  INTO rid, v_total, v_vehicle_id
+  FROM vehicle_rentals v
+  INNER JOIN drivers d ON d.id = NEW.driver_id AND d.organization_id = v.organization_id
+  WHERE v.driver_id = NEW.driver_id
+    AND NEW.trip_date >= v.rental_start_date
+    AND NEW.trip_date <= v.rental_end_date
+    AND v.status IN ('active', 'completed')
+  ORDER BY v.rental_start_date DESC, v.id
+  LIMIT 1;
+
+  IF rid IS NULL THEN
+    NEW.vehicle_rental_id := NULL;
+    NEW.vehicle_rental_fee := NULL;
+    RETURN NEW;
+  END IF;
+
+  NEW.vehicle_rental_id := rid;
+
+  IF v_total IS NOT NULL THEN
+    NEW.vehicle_rental_fee := ROUND(v_total::numeric, 2);
+  ELSE
+    SELECT ve.daily_rent INTO daily_rent FROM vehicles ve WHERE ve.id = v_vehicle_id;
+    IF daily_rent IS NULL THEN
+      NEW.vehicle_rental_fee := NULL;
+    ELSE
+      NEW.vehicle_rental_fee := ROUND(daily_rent::numeric, 2);
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_earnings_records_match_vehicle_rental ON earnings_records;
+CREATE TRIGGER trg_earnings_records_match_vehicle_rental
+  BEFORE INSERT OR UPDATE OF driver_id, trip_date ON earnings_records
+  FOR EACH ROW
+  EXECUTE FUNCTION earnings_records_match_vehicle_rental();
+
+CREATE OR REPLACE FUNCTION refresh_driver_payout_vehicle_fees(p_org_id UUID)
+RETURNS INTEGER AS $$
+DECLARE
+  n INT;
+BEGIN
+  UPDATE driver_payouts dp
+  SET vehicle_rental_fee = COALESCE(agg.s, 0)
+  FROM (
+    SELECT dp2.id,
+           COALESCE((
+             SELECT SUM(sub.mx)
+             FROM (
+               SELECT er.vehicle_rental_id,
+                      MAX(er.vehicle_rental_fee) AS mx
+               FROM earnings_records er
+               INNER JOIN earnings_imports ei ON ei.id = er.import_id
+               WHERE er.driver_id = dp2.driver_id
+                 AND ei.organization_id = dp2.organization_id
+                 AND ei.week_start = dp2.payment_period_start
+                 AND ei.week_end = dp2.payment_period_end
+                 AND er.vehicle_rental_id IS NOT NULL
+                 AND er.vehicle_rental_fee IS NOT NULL
+               GROUP BY er.vehicle_rental_id
+             ) sub
+           ), 0) AS s
+    FROM driver_payouts dp2
+    WHERE dp2.organization_id = p_org_id
+  ) agg
+  WHERE dp.id = agg.id AND dp.organization_id = p_org_id;
+
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Earnings payout guardrail: always deduct full company commission (incl. cash commission).
+CREATE OR REPLACE FUNCTION trg_enforce_driver_payout_after_cash()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  transfer_base numeric;
+BEGIN
+  transfer_base := COALESCE(
+    NEW.total_transfer_earnings,
+    NEW.net_earnings,
+    COALESCE(NEW.gross_earnings, 0) - COALESCE(NEW.platform_fee, 0),
+    NEW.gross_earnings,
+    0
+  );
+
+  NEW.driver_payout := GREATEST(
+    0,
+    ROUND(
+      (
+        transfer_base
+        - ABS(COALESCE(NEW.transfer_commission, 0))
+        - ABS(COALESCE(NEW.cash_commission, 0))
+      )::numeric,
+      2
+    )
+  );
+  NEW.net_earnings := NEW.driver_payout;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_earnings_records_payout_after_cash ON earnings_records;
+CREATE TRIGGER trg_earnings_records_payout_after_cash
+BEFORE INSERT OR UPDATE OF
+  total_transfer_earnings, net_earnings, gross_earnings, platform_fee, company_commission
+ON earnings_records
+FOR EACH ROW
+EXECUTE FUNCTION trg_enforce_driver_payout_after_cash();
 
 COMMIT;

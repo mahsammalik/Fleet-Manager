@@ -7,6 +7,7 @@ export interface DashboardStats {
   expiredDocuments: number;
   totalCommissionEarned: number;
   pendingPayments: number;
+  totalVehicleRentalFees?: number;
   totalVehicles?: number;
   activeRentals?: number;
   overdueRentals?: number;
@@ -15,12 +16,6 @@ export interface DashboardStats {
 export interface DriverStatusItem {
   status: string;
   count: number;
-}
-
-export interface MonthlyEarningsItem {
-  month: string;
-  totalEarnings?: number;
-  totalCommission?: number;
 }
 
 export interface DocumentStatsItem {
@@ -47,10 +42,6 @@ export function getDriverStatusDistribution() {
   return api.get<DriverStatusItem[]>("/dashboard/drivers/status");
 }
 
-export function getMonthlyEarnings() {
-  return api.get<MonthlyEarningsItem[]>("/dashboard/earnings/monthly");
-}
-
 export function getDocumentStats() {
   return api.get<DocumentStatsItem[]>("/dashboard/documents");
 }
@@ -58,3 +49,4 @@ export function getDocumentStats() {
 export function getRecentActivity() {
   return api.get<DashboardActivityItem[]>("/dashboard/activity");
 }
+
