@@ -1,14 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api } from "../../lib/api";
-import { deleteDriver, type DriverListItem } from "../../api/drivers";
-import {
-  PLATFORM_IDS,
-  PLATFORM_ID_LABELS,
-} from "../../constants/platformIds";
+import { deleteDriver, getDrivers, type DriverListItem } from "../../api/drivers";
 import { useAuthStore } from "../../store/authStore";
-import { DriverAvatar } from "../../components/drivers/DriverAvatar";
+import { DriversList } from "../../components/drivers/DriversList";
 
 export function DriversListPage() {
   const user = useAuthStore((s) => s.user);
@@ -16,9 +11,9 @@ export function DriversListPage() {
   const [deleteTarget, setDeleteTarget] = useState<DriverListItem | null>(null);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["drivers"],
+    queryKey: ["drivers", "list"],
     queryFn: async () => {
-      const { data } = await api.get<DriverListItem[]>("/drivers");
+      const { data } = await getDrivers({ limit: 10_000 });
       return data;
     },
   });
@@ -52,99 +47,15 @@ export function DriversListPage() {
           )}
         </div>
       </header>
-      <main className="p-6">
-        <div className="bg-white shadow-sm rounded-xl p-4">
-          {isLoading && <p className="text-sm text-slate-500">Loading drivers...</p>}
-          {isError && <p className="text-sm text-red-600">Failed to load drivers.</p>}
-          {!isLoading && !isError && (
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700 w-12">Photo</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">Name</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">Phone</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">Commission</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">Vehicle</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">Uber/Bolt</th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data?.map((driver) => (
-                  <tr key={driver.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">
-                      <Link to={`/drivers/${driver.id}`} className="flex items-center gap-2">
-                        <DriverAvatar
-                          profilePhotoUrl={driver.profile_photo_url}
-                          firstName={driver.first_name}
-                          lastName={driver.last_name}
-                          size="sm"
-                        />
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Link
-                        to={`/drivers/${driver.id}`}
-                        className="font-medium text-sky-600 hover:text-sky-800"
-                      >
-                        {driver.first_name} {driver.last_name}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2">{driver.phone}</td>
-                    <td className="px-3 py-2 capitalize">{driver.employment_status}</td>
-                    <td className="px-3 py-2">{driver.commission_rate}%</td>
-                    <td className="px-3 py-2 text-slate-600">
-                      {driver.current_vehicle_id ? (
-                        <Link
-                          to={`/vehicles/${driver.current_vehicle_id}`}
-                          className="text-sky-600 hover:text-sky-800 text-sm"
-                        >
-                          {driver.current_vehicle_make || driver.current_vehicle_model
-                            ? `${driver.current_vehicle_make ?? ""} ${driver.current_vehicle_model ?? ""}`.trim()
-                            : driver.current_vehicle_license_plate ?? "View vehicle"}
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-slate-600">
-                      {PLATFORM_ID_LABELS[PLATFORM_IDS.UBER]}: {driver.uber_driver_id || "-"} ·{" "}
-                      {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT]}: {driver.bolt_driver_id || "-"} ·{" "}
-                      {PLATFORM_ID_LABELS[PLATFORM_IDS.GLOVO]}: {driver.glovo_courier_id || "-"} ·{" "}
-                      {PLATFORM_ID_LABELS[PLATFORM_IDS.BOLT_COURIER]}: {driver.bolt_courier_id || "-"} ·{" "}
-                      {PLATFORM_ID_LABELS[PLATFORM_IDS.WOLT]}: {driver.wolt_courier_id || "-"}
-                    </td>
-                    <td className="px-3 py-2 flex items-center gap-3">
-                      <Link
-                        to={`/drivers/${driver.id}/edit`}
-                        className="text-sky-600 hover:text-sky-800 text-sm font-medium"
-                      >
-                        Edit
-                      </Link>
-                      {(user?.role === "admin" || user?.role === "accountant") && (
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(driver)}
-                          className="text-sm font-medium text-red-600 hover:text-red-800"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {data?.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="px-3 py-4 text-center text-sm text-slate-500">
-                      No drivers yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
-
+      <main className="p-4 sm:p-6">
+        <div className="rounded-xl bg-gradient-to-br from-slate-50 via-white to-sky-50/40 p-4 shadow-sm ring-1 ring-slate-200/80 sm:p-5">
+          <DriversList
+            drivers={data}
+            isLoading={isLoading}
+            isError={isError}
+            userRole={user?.role}
+            onDeleteRequest={setDeleteTarget}
+          />
           {deleteTarget && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
               <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
