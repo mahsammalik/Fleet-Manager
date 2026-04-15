@@ -10,6 +10,39 @@ const router = Router();
 
 router.use(authenticateJWT);
 
+function appendDriverSearchCondition(conditions: string[], params: unknown[], rawSearch: string) {
+  const term = rawSearch.trim();
+  if (!term) return;
+  params.push(`%${term}%`);
+  const idx = params.length;
+  conditions.push(`(
+    LOWER(d.first_name) LIKE LOWER($${idx})
+    OR LOWER(d.last_name) LIKE LOWER($${idx})
+    OR LOWER(CONCAT(d.first_name, ' ', d.last_name)) LIKE LOWER($${idx})
+    OR LOWER(d.phone) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.email, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.address, '')) LIKE LOWER($${idx})
+    OR LOWER(d.employment_status) LIKE LOWER($${idx})
+    OR LOWER(d.id::text) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.license_number, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.uber_driver_id, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.bolt_driver_id, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.glovo_courier_id, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.bolt_courier_id, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.wolt_courier_id, '')) LIKE LOWER($${idx})
+  )`);
+}
+
+const DRIVER_LIST_SELECT = `
+      SELECT d.id, d.first_name, d.last_name, d.phone, d.email, d.address, d.license_number,
+             d.employment_status, d.commission_rate, d.profile_photo_url,
+             d.uber_driver_id, d.bolt_driver_id, d.glovo_courier_id, d.bolt_courier_id, d.wolt_courier_id,
+             d.current_vehicle_id,
+             v.license_plate AS current_vehicle_license_plate, v.make AS current_vehicle_make, v.model AS current_vehicle_model
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.current_vehicle_id = v.id
+`;
+
 router.get("/", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) {
@@ -32,13 +65,11 @@ router.get("/", async (req, res) => {
   }
 
   if (search) {
-    params.push(`%${search}%`);
-    const idx = params.length;
-    conditions.push(`(LOWER(d.first_name) LIKE LOWER($${idx}) OR LOWER(d.last_name) LIKE LOWER($${idx}))`);
+    appendDriverSearchCondition(conditions, params, search);
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 100) : 50;
+  const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 10_000) : 50;
   const offsetNum = offset ? Math.max(0, parseInt(offset, 10)) : 0;
   params.push(limitNum, offsetNum);
   const limitIdx = params.length - 1;
@@ -47,12 +78,7 @@ router.get("/", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT d.id, d.first_name, d.last_name, d.phone, d.email, d.employment_status, d.commission_rate, d.profile_photo_url,
-             d.uber_driver_id, d.bolt_driver_id, d.glovo_courier_id, d.bolt_courier_id, d.wolt_courier_id,
-             d.current_vehicle_id,
-             v.license_plate AS current_vehicle_license_plate, v.make AS current_vehicle_make, v.model AS current_vehicle_model
-      FROM drivers d
-      LEFT JOIN vehicles v ON d.current_vehicle_id = v.id
+      ${DRIVER_LIST_SELECT}
       ${where}
       ORDER BY d.created_at DESC
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
@@ -64,6 +90,60 @@ router.get("/", async (req, res) => {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("List drivers error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+/** Optional server-side search (same matching rules as list `search`). */
+router.get("/search", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+
+  const { q, status, limit, offset } = req.query as {
+    q?: string;
+    status?: string;
+    limit?: string;
+    offset?: string;
+  };
+
+  if (!q || !String(q).trim()) {
+    return res.status(400).json({ message: "q is required" });
+  }
+
+  const params: unknown[] = [orgId];
+  const conditions = ["d.organization_id = $1", "(d.is_deleted = false OR d.is_deleted IS NULL)"];
+
+  if (status) {
+    params.push(status);
+    conditions.push(`d.employment_status = $${params.length}`);
+  }
+
+  appendDriverSearchCondition(conditions, params, String(q));
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 500) : 200;
+  const offsetNum = offset ? Math.max(0, parseInt(offset, 10)) : 0;
+  params.push(limitNum, offsetNum);
+  const limitIdx = params.length - 1;
+  const offsetIdx = params.length;
+
+  try {
+    const { rows } = await query(
+      `
+      ${DRIVER_LIST_SELECT}
+      ${where}
+      ORDER BY d.created_at DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      `,
+      params,
+    );
+
+    return res.json(rows);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Search drivers error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });

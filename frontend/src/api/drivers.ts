@@ -6,6 +6,8 @@ export interface DriverListItem {
   last_name: string;
   phone: string;
   email: string | null;
+  address?: string | null;
+  license_number?: string | null;
   employment_status: string;
   commission_rate: string;
   profile_photo_url?: string | null;
@@ -107,6 +109,14 @@ export function createDriver(data: CreateDriverPayload) {
 
 export function getDrivers(params?: GetDriversParams) {
   return api.get<DriverListItem[]>("/drivers", { params });
+}
+
+/** Server-side driver search (`q` matches name, phone, IDs, address, status). */
+export function searchDrivers(
+  q: string,
+  params?: Pick<GetDriversParams, "status" | "limit" | "offset">,
+) {
+  return api.get<DriverListItem[]>("/drivers/search", { params: { q, ...params } });
 }
 
 export function getDriverById(id: string, params?: GetDriverByIdParams) {
