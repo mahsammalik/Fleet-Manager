@@ -20,7 +20,7 @@ import {
   RentalCompletionModal,
   toDateInputValue,
 } from "../../components/rentals/RentalCompletionModal";
-import { getDrivers } from "../../api/drivers";
+import { VehicleRentalDialog } from "../../components/rentals/VehicleRentalDialog";
 import { useAuthStore } from "../../store/authStore";
 import { formatCurrency } from "../../utils/currency";
 import { Tooltip } from "../../components/UI/Tooltip";
@@ -103,15 +103,6 @@ export function VehicleDetailPage() {
     queryKey: ["vehicleMaintenance", id],
     queryFn: () => getVehicleMaintenance(id!),
     enabled: !!id && tab === "maintenance",
-  });
-
-  const { data: driversList } = useQuery({
-    queryKey: ["drivers"],
-    queryFn: async () => {
-      const { data } = await getDrivers();
-      return data;
-    },
-    enabled: !!id && (tab === "rentals" || addRentalOpen),
   });
 
   const vehicle = vehicleRes?.data;
@@ -540,8 +531,7 @@ export function VehicleDetailPage() {
 
       {/* Add rental modal */}
       {addRentalOpen && (
-        <AddRentalModal
-          drivers={driversList ?? []}
+        <VehicleRentalDialog
           dailyRent={Number(v.daily_rent)}
           weeklyRent={Number(v.weekly_rent)}
           monthlyRent={Number(v.monthly_rent)}
@@ -584,152 +574,6 @@ export function VehicleDetailPage() {
           vehicleId={id}
         />
       )}
-    </div>
-  );
-}
-
-function AddRentalModal({
-  drivers,
-  dailyRent,
-  weeklyRent,
-  monthlyRent,
-  onClose,
-  onSubmit,
-  isSubmitting,
-}: {
-  drivers: { id: string; first_name: string; last_name: string }[];
-  dailyRent: number;
-  weeklyRent: number;
-  monthlyRent: number;
-  onClose: () => void;
-  onSubmit: (p: CreateRentalPayload) => void;
-  isSubmitting: boolean;
-}) {
-  const [driverId, setDriverId] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [rentalType, setRentalType] = useState<"daily" | "weekly" | "monthly">("daily");
-  const [depositAmount, setDepositAmount] = useState(0);
-  const [notes, setNotes] = useState("");
-
-  const totalAmount =
-    rentalType === "daily"
-      ? dailyRent
-      : rentalType === "weekly"
-        ? weeklyRent
-        : monthlyRent;
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!driverId || !startDate || !endDate) return;
-    onSubmit({
-      driverId,
-      rentalStartDate: startDate,
-      rentalEndDate: endDate,
-      rentalType,
-      totalRentAmount: totalAmount,
-      depositAmount: depositAmount || undefined,
-      notes: notes.trim() || undefined,
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
-        <h3 className="text-lg font-semibold text-slate-900">Add rental</h3>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Driver *</label>
-            <select
-              required
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              value={driverId}
-              onChange={(e) => setDriverId(e.target.value)}
-            >
-              <option value="">Select driver</option>
-              {drivers.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.first_name} {d.last_name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Start date *</label>
-              <input
-                type="date"
-                required
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">End date *</label>
-              <input
-                type="date"
-                required
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Rental type</label>
-            <select
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              value={rentalType}
-              onChange={(e) => setRentalType(e.target.value as "daily" | "weekly" | "monthly")}
-            >
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-            <p className="text-xs text-slate-500 mt-1">
-              Amount: {formatCurrency(totalAmount)} (RON)
-            </p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Deposit (RON)</label>
-            <input
-              type="number"
-              min={0}
-              step={0.01}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              value={depositAmount || ""}
-              onChange={(e) => setDepositAmount(parseFloat(e.target.value) || 0)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
-            <textarea
-              rows={2}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
-          <div className="flex gap-2 pt-2">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
-            >
-              {isSubmitting ? "Creating..." : "Create rental"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
   );
 }
