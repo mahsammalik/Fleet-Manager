@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
+import Papa from "papaparse";
 import { useAuthStore } from "../../store/authStore";
 import {
   previewEarningsImport,
@@ -11,7 +12,7 @@ import {
 } from "../../api/earningsImport";
 import { syncEarningsVehicleRentals } from "../../api/earnings";
 import { getEarningsImports } from "../../api/earnings";
-import { formatCurrency } from "../../utils/currency";
+import { EarningsImportPreviewVirtualTable } from "../../components/earnings/EarningsImportPreviewVirtualTable";
 
 const PROVIDER_OPTIONS = [
   { value: "uber", label: "Uber" },
@@ -20,13 +21,6 @@ const PROVIDER_OPTIONS = [
   { value: "bolt_courier", label: "Bolt Courier" },
   { value: "wolt_courier", label: "Wolt Courier" },
 ] as const;
-
-const MATCH_LABEL: Record<string, string> = {
-  courier_id: "Courier ID",
-  phone: "Phone",
-  plate: "Plate",
-  none: "No match",
-};
 
 function providerLabel(value: string): string {
   return PROVIDER_OPTIONS.find((o) => o.value === value)?.label ?? value;
@@ -66,6 +60,7 @@ export function EarningsImportPage() {
 
   const [preview, setPreview] = useState<EarningsPreviewResponse | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [clientCsvRowCount, setClientCsvRowCount] = useState<number | null>(null);
   const [selectedPlatform, setSelectedPlatform] = useState<string>("uber");
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
@@ -92,6 +87,7 @@ export function EarningsImportPage() {
       setLocalError(null);
       setImportSuccess(null);
       setPreview(res.data);
+      setClientCsvRowCount(null);
     },
     onError: (e) => {
       setPreview(null);
@@ -138,7 +134,20 @@ export function EarningsImportPage() {
 
   const handleFile = useCallback(
     (file: File | undefined) => {
-      if (file) previewMut.mutate(file);
+      if (!file) return;
+      setClientCsvRowCount(null);
+      if (file.name.toLowerCase().endsWith(".csv")) {
+        Papa.parse<Record<string, unknown>>(file, {
+          header: true,
+          skipEmptyLines: "greedy",
+          complete: (results) => {
+            const n = Array.isArray(results.data) ? results.data.length : 0;
+            setClientCsvRowCount(n);
+          },
+          error: () => setClientCsvRowCount(null),
+        });
+      }
+      previewMut.mutate(file);
     },
     [previewMut],
   );
@@ -172,7 +181,7 @@ export function EarningsImportPage() {
         </p>
       </header>
 
-      <div className="flex-1 p-4 sm:p-6 space-y-8 max-w-4xl mx-auto w-full">
+      <div className="flex-1 p-4 sm:p-6 space-y-8 max-w-6xl mx-auto w-full">
         {localError && (
           <div className="rounded-xl bg-red-50 text-red-800 text-sm px-4 py-3 border border-red-100">{localError}</div>
         )}
@@ -311,7 +320,12 @@ export function EarningsImportPage() {
               </div>
               <div>
                 <span className="text-slate-500">Rows</span>{" "}
-                <span className="font-medium text-slate-900">{preview.totalRows}</span>
+                <span className="font-medium text-slate-900">{preview.totalRows.toLocaleString()}</span>
+                {clientCsvRowCount != null && (
+                  <span className="block text-[11px] font-normal text-slate-500 mt-0.5">
+                    CSV scan: ~{clientCsvRowCount.toLocaleString()} data rows (Papa Parse)
+                  </span>
+                )}
               </div>
               <div>
                 <span className="text-slate-500">Match</span>{" "}
@@ -332,50 +346,16 @@ export function EarningsImportPage() {
               </div>
             )}
 
-            <div className="overflow-x-auto -mx-2">
-              <p className="text-xs font-semibold text-slate-700 mb-2 px-2">Preview (first 10 rows)</p>
-              <table className="min-w-full text-xs text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-2 font-medium">#</th>
-                    <th className="py-2 pr-2 font-medium">Date</th>
-                    <th className="py-2 pr-2 font-medium">Gross</th>
-                    <th className="py-2 pr-2 font-medium">Net</th>
-                    <th className="py-2 pr-2 font-medium">TVT</th>
-                    <th className="py-2 pr-2 font-medium">Fee</th>
-                    <th className="py-2 pr-2 font-medium">Cash</th>
-                    <th className="py-2 pr-2 font-medium border-l-2 border-amber-200">Acct. fee</th>
-                    <th className="py-2 pr-2 font-medium">Match</th>
-                    <th className="py-2 pr-2 font-medium">Driver</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.previewRows.map((r) => (
-                    <tr key={r.rowIndex} className="border-b border-slate-100">
-                      <td className="py-1.5 pr-2 text-slate-600">{r.rowIndex + 1}</td>
-                      <td className="py-1.5 pr-2">{r.tripDate ?? "—"}</td>
-                      <td className="py-1.5 pr-2">{r.gross != null ? formatCurrency(r.gross) : "—"}</td>
-                      <td className="py-1.5 pr-2">{r.net != null ? formatCurrency(r.net) : "—"}</td>
-                      <td className="py-1.5 pr-2">{r.transferTotal != null ? formatCurrency(r.transferTotal) : "—"}</td>
-                      <td className="py-1.5 pr-2">{r.platformFee != null ? formatCurrency(r.platformFee) : "—"}</td>
-                      <td className="py-1.5 pr-2">{r.dailyCash != null ? formatCurrency(r.dailyCash) : "—"}</td>
-                      <td className="py-1.5 pr-2 border-l-2 border-amber-100 italic text-slate-600">
-                        {r.accountOpeningFee != null && r.accountOpeningFee > 0
-                          ? `−${formatCurrency(r.accountOpeningFee)}`
-                          : "—"}
-                      </td>
-                      <td className="py-1.5 pr-2 text-slate-600">{MATCH_LABEL[r.matchMethod] ?? r.matchMethod}</td>
-                      <td className="py-1.5 pr-2">
-                        {r.driverMatched ? (
-                          <span className="text-emerald-700 font-medium">Matched</span>
-                        ) : (
-                          <span className="text-slate-400">Unmatched</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div>
+              <p className="text-xs font-semibold text-slate-700 mb-2">
+                Full data preview ({preview.totalRows.toLocaleString()} rows)
+              </p>
+              <EarningsImportPreviewVirtualTable
+                importId={preview.importId}
+                totalRows={preview.totalRows}
+                aggregates={preview.aggregates}
+                matchedPreviewCount={preview.matchedPreviewCount}
+              />
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -392,7 +372,7 @@ export function EarningsImportPage() {
                 }
                 className="rounded-lg bg-sky-600 text-white text-sm font-medium px-4 py-2.5 min-h-[44px] hover:bg-sky-700 disabled:opacity-50"
               >
-                {commitMut.isPending ? "Importing…" : "Confirm import"}
+                {commitMut.isPending ? "Importing…" : "Confirm import (valid rows only)"}
               </button>
               <button
                 type="button"
