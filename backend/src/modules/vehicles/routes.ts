@@ -152,13 +152,49 @@ async function completeRentalWithDepositRefund(
 }
 
 // --- Vehicles list
+function appendVehicleSearchCondition(conditions: string[], params: unknown[], rawSearch: string) {
+  const term = rawSearch.trim();
+  if (!term) return;
+  params.push(`%${term}%`);
+  const idx = params.length;
+  conditions.push(`(
+    LOWER(v.license_plate) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(v.vin, '')) LIKE LOWER($${idx})
+    OR LOWER(v.make) LIKE LOWER($${idx})
+    OR LOWER(v.model) LIKE LOWER($${idx})
+    OR LOWER(CONCAT(v.make, ' ', v.model)) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(v.vehicle_type, '')) LIKE LOWER($${idx})
+    OR LOWER(v.status) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(v.current_driver_id::text, '')) LIKE LOWER($${idx})
+    OR LOWER(CONCAT(COALESCE(d.first_name, ''), ' ', COALESCE(d.last_name, ''))) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.first_name, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.last_name, '')) LIKE LOWER($${idx})
+    OR LOWER(COALESCE(d.phone, '')) LIKE LOWER($${idx})
+  )`);
+}
+
+const VEHICLE_LIST_SELECT = `
+      SELECT v.id, v.organization_id, v.vehicle_type, v.make, v.model, v.year, v.color,
+             v.license_plate, v.vin, v.fuel_type, v.transmission, v.seating_capacity,
+             v.daily_rent, v.weekly_rent, v.monthly_rent, v.insurance_expiry, v.registration_expiry,
+             v.status, v.current_driver_id, v.notes, v.created_at, v.updated_at,
+             d.first_name AS driver_first_name, d.last_name AS driver_last_name, d.phone AS driver_phone
+      FROM vehicles v
+      LEFT JOIN drivers d ON v.current_driver_id = d.id
+`;
+
 router.get("/", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
 
-  const { status, limit, offset } = req.query as { status?: string; limit?: string; offset?: string };
+  const { search, status, limit, offset } = req.query as {
+    search?: string;
+    status?: string;
+    limit?: string;
+    offset?: string;
+  };
   const params: unknown[] = [orgId];
   const conditions = ["v.organization_id = $1"];
 
@@ -166,9 +202,12 @@ router.get("/", async (req, res) => {
     params.push(status);
     conditions.push(`v.status = $${params.length}`);
   }
+  if (search) {
+    appendVehicleSearchCondition(conditions, params, search);
+  }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 100) : 50;
+  const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 10_000) : 50;
   const offsetNum = offset ? Math.max(0, parseInt(offset, 10)) : 0;
   params.push(limitNum, offsetNum);
   const limitIdx = params.length - 1;
@@ -177,13 +216,7 @@ router.get("/", async (req, res) => {
   try {
     const { rows } = await query(
       `
-      SELECT v.id, v.organization_id, v.vehicle_type, v.make, v.model, v.year, v.color,
-             v.license_plate, v.vin, v.fuel_type, v.transmission, v.seating_capacity,
-             v.daily_rent, v.weekly_rent, v.monthly_rent, v.insurance_expiry, v.registration_expiry,
-             v.status, v.current_driver_id, v.notes, v.created_at, v.updated_at,
-             d.first_name AS driver_first_name, d.last_name AS driver_last_name
-      FROM vehicles v
-      LEFT JOIN drivers d ON v.current_driver_id = d.id
+      ${VEHICLE_LIST_SELECT}
       ${where}
       ORDER BY v.created_at DESC
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
@@ -193,6 +226,55 @@ router.get("/", async (req, res) => {
     return res.json(rows);
   } catch (err) {
     console.error("List vehicles error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+router.get("/search", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+
+  const { q, status, limit, offset } = req.query as {
+    q?: string;
+    status?: string;
+    limit?: string;
+    offset?: string;
+  };
+  if (!q || !String(q).trim()) {
+    return res.status(400).json({ message: "q is required" });
+  }
+
+  const params: unknown[] = [orgId];
+  const conditions = ["v.organization_id = $1"];
+
+  if (status) {
+    params.push(status);
+    conditions.push(`v.status = $${params.length}`);
+  }
+  appendVehicleSearchCondition(conditions, params, String(q));
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10)), 500) : 200;
+  const offsetNum = offset ? Math.max(0, parseInt(offset, 10)) : 0;
+  params.push(limitNum, offsetNum);
+  const limitIdx = params.length - 1;
+  const offsetIdx = params.length;
+
+  try {
+    const { rows } = await query(
+      `
+      ${VEHICLE_LIST_SELECT}
+      ${where}
+      ORDER BY v.created_at DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      `,
+      params,
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.error("Search vehicles error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });

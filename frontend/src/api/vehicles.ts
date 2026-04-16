@@ -31,6 +31,7 @@ export interface VehicleListItem {
   updated_at: string;
   driver_first_name?: string | null;
   driver_last_name?: string | null;
+  driver_phone?: string | null;
 }
 
 export type Vehicle = VehicleListItem;
@@ -155,6 +156,7 @@ export interface UpdateMaintenancePayload {
 }
 
 export interface GetVehiclesParams {
+  search?: string;
   status?: string;
   limit?: number;
   offset?: number;
@@ -162,6 +164,13 @@ export interface GetVehiclesParams {
 
 export function getVehicles(params?: GetVehiclesParams) {
   return api.get<VehicleListItem[]>("/vehicles", { params });
+}
+
+export function searchVehicles(
+  q: string,
+  params?: Pick<GetVehiclesParams, "status" | "limit" | "offset">,
+) {
+  return api.get<VehicleListItem[]>("/vehicles/search", { params: { q, ...params } });
 }
 
 export function getVehicleById(id: string) {
