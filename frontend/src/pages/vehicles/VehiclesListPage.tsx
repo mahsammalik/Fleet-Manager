@@ -3,15 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { getVehicles, deleteVehicle, type VehicleListItem } from "../../api/vehicles";
 import { useAuthStore } from "../../store/authStore";
-import { formatCurrency } from "../../utils/currency";
-
-const STATUS_COLORS: Record<string, string> = {
-  available: "bg-green-100 text-green-800",
-  rented: "bg-blue-100 text-blue-800",
-  maintenance: "bg-amber-100 text-amber-800",
-  sold: "bg-slate-100 text-slate-800",
-  scrapped: "bg-red-100 text-red-800",
-};
+import { VehicleList } from "../../components/vehicles/VehicleList";
 
 export function VehiclesListPage() {
   const user = useAuthStore((s) => s.user);
@@ -21,7 +13,7 @@ export function VehiclesListPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["vehicles"],
     queryFn: async () => {
-      const { data: res } = await getVehicles();
+      const { data: res } = await getVehicles({ limit: 10_000 });
       return res;
     },
   });
@@ -59,113 +51,13 @@ export function VehiclesListPage() {
       </header>
       <main className="p-6">
         <div className="bg-white shadow-sm rounded-xl overflow-hidden">
-          {isLoading && (
-            <p className="p-4 text-sm text-slate-500">Loading vehicles...</p>
-          )}
-          {isError && (
-            <p className="p-4 text-sm text-red-600">Failed to load vehicles.</p>
-          )}
-          {!isLoading && !isError && (
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">
-                    Vehicle
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">
-                    License plate
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">
-                    Status
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">
-                    Rent (daily / monthly)
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">
-                    Current driver
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-slate-700">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {data?.map((v) => (
-                  <tr key={v.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">
-                      <Link
-                        to={`/vehicles/${v.id}`}
-                        className="font-medium text-sky-600 hover:text-sky-800"
-                      >
-                        {v.year ? `${v.year} ` : ""}
-                        {v.make} {v.model}
-                      </Link>
-                      <span className="text-slate-500 text-xs ml-1">
-                        {v.vehicle_type}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 font-mono">{v.license_plate}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex rounded px-2 py-0.5 text-xs font-medium capitalize ${
-                          STATUS_COLORS[v.status] ?? "bg-slate-100 text-slate-800"
-                        }`}
-                      >
-                        {v.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-slate-700">
-                      {formatCurrency(Number(v.daily_rent))} /{" "}
-                      {formatCurrency(Number(v.monthly_rent))}
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">
-                      {v.current_driver_id ? (
-                        <Link
-                          to={`/drivers/${v.current_driver_id}`}
-                          className="text-sky-600 hover:text-sky-800 text-sm"
-                        >
-                          {v.driver_first_name || v.driver_last_name
-                            ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim()
-                            : "View driver"}
-                        </Link>
-                      ) : (
-                        v.driver_first_name || v.driver_last_name
-                          ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim()
-                          : "—"
-                      )}
-                    </td>
-                    <td className="px-3 py-2 flex items-center gap-3">
-                      <Link
-                        to={`/vehicles/${v.id}/edit`}
-                        className="text-sky-600 hover:text-sky-800 text-sm font-medium"
-                      >
-                        Edit
-                      </Link>
-                      {(user?.role === "admin" || user?.role === "accountant") && (
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(v)}
-                          className="text-sm font-medium text-red-600 hover:text-red-800"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {data?.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="px-3 py-4 text-center text-sm text-slate-500"
-                    >
-                      No vehicles yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
+          <VehicleList
+            vehicles={data}
+            isLoading={isLoading}
+            isError={isError}
+            userRole={user?.role}
+            onDeleteRequest={setDeleteTarget}
+          />
 
           {deleteTarget && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
