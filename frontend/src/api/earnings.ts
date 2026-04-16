@@ -48,8 +48,11 @@ export interface EarningsImportsResponse {
 export interface PayoutListItem {
   id: string;
   driver_id: string;
+  driver_name?: string;
   payment_period_start: string;
   payment_period_end: string;
+  period_start_label?: string;
+  period_end_label?: string;
   net_driver_payout: string | null;
   vehicle_rental_fee: string | null;
   payment_status: string;
