@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
     driver_id UUID REFERENCES drivers(id) ON DELETE CASCADE,
+    platform_id VARCHAR(255),
     payment_period_start DATE NOT NULL,
     payment_period_end DATE NOT NULL,
     total_gross_earnings DECIMAL(12, 2),
@@ -232,6 +233,7 @@ CREATE INDEX IF NOT EXISTS idx_earnings_records_import ON earnings_records(impor
 CREATE INDEX IF NOT EXISTS idx_earnings_records_vehicle_rental ON earnings_records(vehicle_rental_id)
     WHERE vehicle_rental_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_driver_payouts_driver ON driver_payouts(driver_id);
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_platform_id ON driver_payouts(platform_id);
 CREATE INDEX IF NOT EXISTS idx_driver_payouts_status ON driver_payouts(payment_status);
 CREATE INDEX IF NOT EXISTS idx_driver_payouts_period ON driver_payouts(payment_period_start, payment_period_end);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_payouts_org_driver_period ON driver_payouts (organization_id, driver_id, payment_period_start, payment_period_end);

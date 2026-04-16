@@ -36,6 +36,31 @@ function toNum(value: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function includesQuery(value: string | null | undefined, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return false;
+  return String(value ?? "").toLowerCase().includes(q);
+}
+
+function HighlightText({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{text}</>;
+  const lowerText = text.toLowerCase();
+  const lowerQuery = q.toLowerCase();
+  const index = lowerText.indexOf(lowerQuery);
+  if (index === -1) return <>{text}</>;
+  const end = index + q.length;
+  return (
+    <>
+      {text.slice(0, index)}
+      <span className="rounded bg-yellow-200/90 px-1 text-slate-950 shadow-[0_0_10px_rgba(250,204,21,0.6)]">
+        {text.slice(index, end)}
+      </span>
+      {text.slice(end)}
+    </>
+  );
+}
+
 export function DriverPayoutTable({
   rows,
   detailsByPayoutId,
@@ -53,6 +78,7 @@ export function DriverPayoutTable({
   const {
     searchQuery,
     setSearchQuery,
+    debouncedQuery,
     statusFilter,
     setStatusFilter,
     filteredRows,
@@ -70,6 +96,7 @@ export function DriverPayoutTable({
   const selectedPendingIds = pendingIds.filter((id) => selectedIds.has(id));
   const pendingTotal = filteredRows.reduce((sum, r) => (r.payment_status === "pending" ? sum + toNum(r.net_driver_payout) : sum), 0);
   const paidCount = filteredRows.filter((r) => r.payment_status === "paid").length;
+  const platformIdMatchCount = filteredRows.filter((r) => includesQuery(r.platform_id, debouncedQuery)).length;
 
   const showNoRows = !isLoading && filteredRows.length === 0;
 
@@ -79,7 +106,7 @@ export function DriverPayoutTable({
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="md:col-span-2">
             <label htmlFor="payout-search" className="mb-1 block text-xs font-medium text-slate-600">
-              Search driver, phone, period, status
+              Search driver, phone, period, platform ID, vehicle rental, status
             </label>
             <div className="relative">
               <input
@@ -88,7 +115,7 @@ export function DriverPayoutTable({
                 autoComplete="off"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="e.g. Bilal, 2026-04, pending"
+                placeholder="e.g. Bilal, 46bcf8, pending, 250"
                 className={`w-full rounded-xl border border-white/50 bg-white/55 py-2.5 pl-3 text-sm text-slate-900 shadow-inner outline-none ring-sky-500/30 placeholder:text-slate-400 focus:border-sky-300/80 focus:ring-2 ${hasQuery ? "pr-[4.5rem]" : "pr-3"}`}
               />
               {hasQuery && (
@@ -127,6 +154,11 @@ export function DriverPayoutTable({
             <p className="text-sm font-semibold text-slate-900 tabular-nums">
               {isFilterPending ? "Filtering…" : `${filteredCount.toLocaleString()} of ${totalCount.toLocaleString()}`}
             </p>
+            {!isFilterPending && debouncedQuery.trim() && (
+              <p className="mt-1 text-xs text-slate-600">
+                Found {platformIdMatchCount.toLocaleString()} matching platform ID{platformIdMatchCount === 1 ? "" : "s"}
+              </p>
+            )}
           </div>
           <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2">
             <p className="text-xs text-amber-700">Pending total</p>
@@ -180,7 +212,7 @@ export function DriverPayoutTable({
         </div>
       ) : showNoRows ? (
         <div className="rounded-xl border border-slate-200 bg-white/70 px-4 py-10 text-center text-sm text-slate-500">
-          No payouts match your filters. Try driver name, period dates, or status.
+          No payouts match your filters. Try driver name, platform ID, period dates, rental amount, or status.
         </div>
       ) : (
         <>
@@ -207,11 +239,21 @@ export function DriverPayoutTable({
                       <tr key={row.id} className="align-top text-slate-800">
                         <td className="px-3 py-3">
                           <div className="font-medium">
-                            {row.first_name} {row.last_name}
+                            <HighlightText text={`${row.first_name} ${row.last_name}`} query={debouncedQuery} />
                           </div>
-                          <div className="text-xs text-slate-500">{row.phone || "No phone"}</div>
+                          <div className="text-xs text-slate-500">
+                            <HighlightText text={row.phone || "No phone"} query={debouncedQuery} />
+                          </div>
+                          <div className="mt-1 text-xs text-slate-600">
+                            Platform ID:{" "}
+                            <span className="font-mono">
+                              <HighlightText text={row.platform_id || "—"} query={debouncedQuery} />
+                            </span>
+                          </div>
                         </td>
-                        <td className="px-3 py-3 text-xs text-slate-700">{periodLabel(row)}</td>
+                        <td className="px-3 py-3 text-xs text-slate-700">
+                          <HighlightText text={periodLabel(row)} query={debouncedQuery} />
+                        </td>
                         <td className="px-3 py-3 text-right">
                           <div className="text-lg font-bold tabular-nums text-slate-900">
                             {formatCurrency(toNum(row.net_driver_payout))}
@@ -223,12 +265,15 @@ export function DriverPayoutTable({
                               BADGE_BY_STATUS[row.payment_status] ?? "bg-slate-100 text-slate-700"
                             }`}
                           >
-                            {row.payment_status}
+                            <HighlightText text={row.payment_status} query={debouncedQuery} />
                           </span>
                         </td>
                         <td className="px-3 py-3">
                           <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                            {toNum(row.vehicle_rental_fee) ? formatCurrency(toNum(row.vehicle_rental_fee)) : "—"}
+                            <HighlightText
+                              text={toNum(row.vehicle_rental_fee) ? formatCurrency(toNum(row.vehicle_rental_fee)) : "—"}
+                              query={debouncedQuery}
+                            />
                           </span>
                         </td>
                         <td className="px-3 py-3">
@@ -329,9 +374,17 @@ export function DriverPayoutTable({
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-slate-900">
-                        {row.first_name} {row.last_name}
+                        <HighlightText text={`${row.first_name} ${row.last_name}`} query={debouncedQuery} />
                       </p>
-                      <p className="text-xs text-slate-500">{row.phone || "No phone"}</p>
+                      <p className="text-xs text-slate-500">
+                        <HighlightText text={row.phone || "No phone"} query={debouncedQuery} />
+                      </p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Platform ID:{" "}
+                        <span className="font-mono">
+                          <HighlightText text={row.platform_id || "—"} query={debouncedQuery} />
+                        </span>
+                      </p>
                     </div>
                     <input
                       type="checkbox"
@@ -355,9 +408,12 @@ export function DriverPayoutTable({
                     </span>
                   </div>
                   <p className="mt-2 text-xs text-slate-600">
-                    {periodLabel(row)} | Vehicle:{" "}
+                    <HighlightText text={periodLabel(row)} query={debouncedQuery} /> | Vehicle:{" "}
                     <span className="font-semibold text-amber-800">
-                      {toNum(row.vehicle_rental_fee) ? formatCurrency(toNum(row.vehicle_rental_fee)) : "—"}
+                      <HighlightText
+                        text={toNum(row.vehicle_rental_fee) ? formatCurrency(toNum(row.vehicle_rental_fee)) : "—"}
+                        query={debouncedQuery}
+                      />
                     </span>
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">

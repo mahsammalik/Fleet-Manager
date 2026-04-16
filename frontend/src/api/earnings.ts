@@ -48,6 +48,7 @@ export interface EarningsImportsResponse {
 export interface PayoutListItem {
   id: string;
   driver_id: string;
+  platform_id: string | null;
   driver_name?: string;
   payment_period_start: string;
   payment_period_end: string;
@@ -69,6 +70,38 @@ export interface EarningsPayoutsResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export interface EarningsReportRow {
+  id: string;
+  driver_id: string;
+  driver_name: string;
+  payment_period_start: string;
+  payment_period_end: string;
+  period_start_label: string;
+  period_end_label: string;
+  total_gross_earnings: string | null;
+  vehicle_rental_fee: string | null;
+  net_driver_payout: string | null;
+  payment_status: string;
+  payment_date: string | null;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+}
+
+export interface EarningsReportSummary {
+  rowCount: number;
+  totalNetPayout: number;
+  totalVehicleRental: number;
+  totalRevenue: number;
+}
+
+export interface EarningsReportsResponse {
+  items: EarningsReportRow[];
+  summary: EarningsReportSummary;
+  truncated: boolean;
+  limit: number;
 }
 
 export interface PayoutProrationDetail {
@@ -106,6 +139,18 @@ export function getEarningsPayouts(params: {
   return api.get<EarningsPayoutsResponse>("/earnings/payouts", { params });
 }
 
+export function getEarningsReports(params: {
+  from?: string;
+  to?: string;
+  q?: string;
+  status?: string;
+  driverId?: string;
+  minVehicleRental?: number;
+  limit?: number;
+}) {
+  return api.get<EarningsReportsResponse>("/earnings/reports", { params });
+}
+
 export function getPayoutsWithProrationDetails(params: {
   page?: number;
   pageSize?: number;
@@ -137,10 +182,24 @@ export function downloadEarningsReportCsv(params: {
   q?: string;
   status?: string;
   driverId?: string;
+  minVehicleRental?: number;
 }) {
   return api.get<Blob>("/earnings/reports/export", {
     params: { ...params, format: "csv" },
     responseType: "blob",
+  });
+}
+
+export function getEarningsReportPdfData(params: {
+  from?: string;
+  to?: string;
+  q?: string;
+  status?: string;
+  driverId?: string;
+  minVehicleRental?: number;
+}) {
+  return api.get<EarningsReportsResponse>("/earnings/reports/export", {
+    params: { ...params, format: "pdf" },
   });
 }
 

@@ -717,85 +717,249 @@ router.get("/records/payout-integrity", async (req, res) => {
 
 const PAY_STATUSES = new Set(["pending", "approved", "paid", "hold"]);
 
+const REPORT_MAX_ROWS = 10000;
+
+type PayoutReportFilters = {
+  status: string | null;
+  from: string | null;
+  to: string | null;
+  q: string | null;
+  driverId: string | null;
+  minVehicleRental: number | null;
+};
+
+type PayoutFilterQuery = Record<string, unknown>;
+
+function parsePayoutReportFilters(queryParams: PayoutFilterQuery): PayoutReportFilters {
+  const statusRaw =
+    queryParams.status != null && String(queryParams.status).trim() !== ""
+      ? String(queryParams.status)
+      : null;
+  const status = statusRaw && PAY_STATUSES.has(statusRaw) ? statusRaw : null;
+  const from =
+    typeof queryParams.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(queryParams.from)
+      ? queryParams.from
+      : null;
+  const to =
+    typeof queryParams.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(queryParams.to)
+      ? queryParams.to
+      : null;
+  const q =
+    typeof queryParams.q === "string" && queryParams.q.trim() !== "" ? queryParams.q.trim() : null;
+  const driverId =
+    typeof queryParams.driverId === "string" && UUID_RE.test(queryParams.driverId)
+      ? queryParams.driverId
+      : null;
+  const minVehicleRentalRaw =
+    queryParams.minVehicleRental != null && String(queryParams.minVehicleRental).trim() !== ""
+      ? Number(queryParams.minVehicleRental)
+      : Number.NaN;
+  const minVehicleRental =
+    Number.isFinite(minVehicleRentalRaw) && minVehicleRentalRaw >= 0 ? minVehicleRentalRaw : null;
+
+  return { status, from, to, q, driverId, minVehicleRental };
+}
+
+function buildPayoutReportWhereClause(orgId: string, filters: PayoutReportFilters) {
+  const where: string[] = ["dp.organization_id = $1"];
+  const params: unknown[] = [orgId];
+  let p = 2;
+
+  if (filters.status) {
+    where.push(`dp.payment_status = $${p++}`);
+    params.push(filters.status);
+  }
+  if (filters.from) {
+    where.push(`dp.payment_period_end >= $${p++}::date`);
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    where.push(`dp.payment_period_start <= $${p++}::date`);
+    params.push(filters.to);
+  }
+  if (filters.driverId) {
+    where.push(`dp.driver_id = $${p++}::uuid`);
+    params.push(filters.driverId);
+  }
+  if (filters.q) {
+    where.push(
+      `(d.first_name ILIKE $${p} OR d.last_name ILIKE $${p} OR d.phone ILIKE $${p} OR dp.platform_id ILIKE $${p} OR CONCAT(d.first_name, ' ', d.last_name) ILIKE $${p} OR COALESCE(dp.vehicle_rental_fee::text, '') ILIKE $${p})`,
+    );
+    params.push(`%${filters.q}%`);
+    p++;
+  }
+  if (filters.minVehicleRental != null) {
+    where.push(`COALESCE(dp.vehicle_rental_fee, 0) >= $${p++}::numeric`);
+    params.push(filters.minVehicleRental);
+  }
+
+  return { whereSql: where.join(" AND "), params, nextParamIndex: p };
+}
+
+type EarningsReportRow = {
+  id: string;
+  driver_id: string;
+  platform_id: string | null;
+  payment_period_start: string;
+  payment_period_end: string;
+  period_start_label: string;
+  period_end_label: string;
+  net_driver_payout: string | null;
+  vehicle_rental_fee: string | null;
+  payment_status: string;
+  payment_date: string | null;
+  total_gross_earnings: string | null;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  driver_name: string;
+};
+
+async function fetchEarningsReportRows(
+  orgId: string,
+  filters: PayoutReportFilters,
+  limit: number,
+): Promise<EarningsReportRow[]> {
+  const { whereSql, params, nextParamIndex } = buildPayoutReportWhereClause(orgId, filters);
+  const boundedLimit = Math.max(1, Math.min(REPORT_MAX_ROWS, limit));
+  const listParams = [...params, boundedLimit];
+  const { rows } = await pool.query<EarningsReportRow>(
+    `SELECT dp.id::text, dp.driver_id::text, dp.platform_id,
+            dp.payment_period_start::text, dp.payment_period_end::text,
+            TO_CHAR(dp.payment_period_start, 'YYYY-MM-DD') AS period_start_label,
+            TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label,
+            dp.net_driver_payout::text, dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
+            dp.total_gross_earnings::text,
+            d.first_name, d.last_name, d.phone, CONCAT(d.first_name, ' ', d.last_name) AS driver_name
+     FROM driver_payouts dp
+     INNER JOIN drivers d ON d.id = dp.driver_id
+     WHERE ${whereSql}
+     ORDER BY dp.payment_period_end DESC, dp.created_at DESC
+     LIMIT $${nextParamIndex}`,
+    listParams,
+  );
+  return rows;
+}
+
+async function fetchEarningsReportSummary(orgId: string, filters: PayoutReportFilters) {
+  const { whereSql, params } = buildPayoutReportWhereClause(orgId, filters);
+  const { rows } = await pool.query<{
+    row_count: string;
+    total_net_payout: string | null;
+    total_vehicle_rental: string | null;
+    total_revenue: string | null;
+  }>(
+    `SELECT
+       COUNT(*)::text AS row_count,
+       COALESCE(SUM(dp.net_driver_payout), 0)::text AS total_net_payout,
+       COALESCE(SUM(dp.vehicle_rental_fee), 0)::text AS total_vehicle_rental,
+       COALESCE(SUM(dp.total_gross_earnings), 0)::text AS total_revenue
+     FROM driver_payouts dp
+     INNER JOIN drivers d ON d.id = dp.driver_id
+     WHERE ${whereSql}`,
+    params,
+  );
+  const summary = rows[0];
+  return {
+    rowCount: parseInt(summary?.row_count ?? "0", 10),
+    totalNetPayout: parseFloat(summary?.total_net_payout ?? "0"),
+    totalVehicleRental: parseFloat(summary?.total_vehicle_rental ?? "0"),
+    totalRevenue: parseFloat(summary?.total_revenue ?? "0"),
+  };
+}
+
+async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page: number, pageSize: number) {
+  const offset = (page - 1) * pageSize;
+  const { whereSql, params, nextParamIndex } = buildPayoutReportWhereClause(orgId, filters);
+
+  const countRes = await pool.query<{ c: string }>(
+    `SELECT COUNT(*)::text AS c
+     FROM driver_payouts dp
+     INNER JOIN drivers d ON d.id = dp.driver_id
+     WHERE ${whereSql}`,
+    params,
+  );
+  const total = parseInt(countRes.rows[0]?.c ?? "0", 10);
+
+  const listParams = [...params, pageSize, offset];
+  const listRes = await pool.query(
+    `SELECT dp.id::text, dp.driver_id::text, dp.platform_id,
+            dp.payment_period_start::text, dp.payment_period_end::text,
+            dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
+            dp.total_gross_earnings::text, dp.company_commission::text,
+            dp.vehicle_rental_fee::text,
+            d.first_name, d.last_name, d.phone,
+            CONCAT(d.first_name, ' ', d.last_name) AS driver_name,
+            TO_CHAR(dp.payment_period_start, 'YYYY-MM-DD') AS period_start_label,
+            TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label
+     FROM driver_payouts dp
+     INNER JOIN drivers d ON d.id = dp.driver_id
+     WHERE ${whereSql}
+     ORDER BY dp.payment_period_end DESC, dp.created_at DESC
+     LIMIT $${nextParamIndex} OFFSET $${nextParamIndex + 1}`,
+    listParams,
+  );
+
+  return { items: listRes.rows, page, pageSize, total };
+}
+
 router.get("/payouts", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
 
   const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
   const pageSize = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize ?? "25"), 10) || 25));
-  const offset = (page - 1) * pageSize;
-  const statusRaw = req.query.status != null && String(req.query.status).trim() !== "" ? String(req.query.status) : null;
-  const status = statusRaw && PAY_STATUSES.has(statusRaw) ? statusRaw : null;
-  const from = typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
-  const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
-  const qSearch =
-    typeof req.query.q === "string" && req.query.q.trim() !== "" ? `%${req.query.q.trim()}%` : null;
-  const driverIdFilter =
-    typeof req.query.driverId === "string" && UUID_RE.test(req.query.driverId)
-      ? req.query.driverId
-      : null;
+  const filters = parsePayoutReportFilters(req.query as PayoutFilterQuery);
 
   try {
-    const where: string[] = ["dp.organization_id = $1"];
-    const params: unknown[] = [orgId];
-    let p = 2;
-    if (status) {
-      where.push(`dp.payment_status = $${p++}`);
-      params.push(status);
-    }
-    if (from) {
-      where.push(`dp.payment_period_end >= $${p++}::date`);
-      params.push(from);
-    }
-    if (to) {
-      where.push(`dp.payment_period_start <= $${p++}::date`);
-      params.push(to);
-    }
-    if (driverIdFilter) {
-      where.push(`dp.driver_id = $${p++}::uuid`);
-      params.push(driverIdFilter);
-    }
-    if (qSearch) {
-      where.push(
-        `(d.first_name ILIKE $${p} OR d.last_name ILIKE $${p} OR d.phone ILIKE $${p} OR CONCAT(d.first_name, ' ', d.last_name) ILIKE $${p})`,
-      );
-      params.push(qSearch);
-      p++;
-    }
-    const whereSql = where.join(" AND ");
-
-    const countRes = await pool.query<{ c: string }>(
-      `SELECT COUNT(*)::text AS c
-       FROM driver_payouts dp
-       INNER JOIN drivers d ON d.id = dp.driver_id
-       WHERE ${whereSql}`,
-      params,
-    );
-    const total = parseInt(countRes.rows[0]?.c ?? "0", 10);
-
-    params.push(pageSize, offset);
-    const listRes = await pool.query(
-      `SELECT dp.id::text, dp.driver_id::text, dp.payment_period_start::text, dp.payment_period_end::text,
-              dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
-              dp.total_gross_earnings::text, dp.company_commission::text,
-              dp.vehicle_rental_fee::text,
-              d.first_name, d.last_name, d.phone,
-              CONCAT(d.first_name, ' ', d.last_name) AS driver_name,
-              TO_CHAR(dp.payment_period_start, 'YYYY-MM-DD') AS period_start_label,
-              TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label
-       FROM driver_payouts dp
-       INNER JOIN drivers d ON d.id = dp.driver_id
-       WHERE ${whereSql}
-       ORDER BY dp.payment_period_end DESC, dp.created_at DESC
-       LIMIT $${p} OFFSET $${p + 1}`,
-      params,
-    );
-
-    return res.json({ items: listRes.rows, page, pageSize, total });
+    return res.json(await fetchPayoutList(orgId, filters, page, pageSize));
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("Earnings payouts list error", err);
     return res.status(500).json({ message: "Failed to list payouts" });
+  }
+});
+
+router.get("/payouts/search", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+  const pageSize = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize ?? "25"), 10) || 25));
+  const filters = parsePayoutReportFilters(req.query as PayoutFilterQuery);
+
+  try {
+    return res.json(await fetchPayoutList(orgId, filters, page, pageSize));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings payouts search error", err);
+    return res.status(500).json({ message: "Failed to search payouts" });
+  }
+});
+
+router.get("/reports", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const limitRaw = parseInt(String(req.query.limit ?? String(REPORT_MAX_ROWS)), 10);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(REPORT_MAX_ROWS, limitRaw)) : REPORT_MAX_ROWS;
+  const filters = parsePayoutReportFilters(req.query as PayoutFilterQuery);
+
+  try {
+    const [items, summary] = await Promise.all([
+      fetchEarningsReportRows(orgId, filters, limit),
+      fetchEarningsReportSummary(orgId, filters),
+    ]);
+    return res.json({
+      items,
+      summary,
+      truncated: summary.rowCount > items.length,
+      limit,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings reports preview error", err);
+    return res.status(500).json({ message: "Failed to load reports" });
   }
 });
 
@@ -931,93 +1095,42 @@ router.patch("/payouts/bulk", async (req, res) => {
   }
 });
 
-type PayoutExportRow = {
-  id: string;
-  driver_id: string;
-  payment_period_start: string;
-  payment_period_end: string;
-  net_driver_payout: string | null;
-  vehicle_rental_fee: string | null;
-  payment_status: string;
-  payment_date: string | null;
-  first_name: string;
-  last_name: string;
-  phone: string | null;
-};
-
-async function fetchPayoutExportRows(
-  orgId: string,
-  status: string | null,
-  from: string | null,
-  to: string | null,
-  q: string | null,
-  driverId: string | null,
-): Promise<PayoutExportRow[]> {
-  const where: string[] = ["dp.organization_id = $1"];
-  const params: unknown[] = [orgId];
-  let p = 2;
-  if (status) {
-    where.push(`dp.payment_status = $${p++}`);
-    params.push(status);
-  }
-  if (from) {
-    where.push(`dp.payment_period_end >= $${p++}::date`);
-    params.push(from);
-  }
-  if (to) {
-    where.push(`dp.payment_period_start <= $${p++}::date`);
-    params.push(to);
-  }
-  if (driverId) {
-    where.push(`dp.driver_id = $${p++}::uuid`);
-    params.push(driverId);
-  }
-  if (q) {
-    const qq = `%${q.trim()}%`;
-    where.push(
-      `(d.first_name ILIKE $${p} OR d.last_name ILIKE $${p} OR d.phone ILIKE $${p} OR CONCAT(d.first_name, ' ', d.last_name) ILIKE $${p})`,
-    );
-    params.push(qq);
-    p++;
-  }
-  const whereSql = where.join(" AND ");
-  const { rows } = await pool.query<PayoutExportRow>(
-    `SELECT dp.id::text, dp.driver_id::text, dp.payment_period_start::text, dp.payment_period_end::text,
-            dp.net_driver_payout::text, dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
-            d.first_name, d.last_name, d.phone
-     FROM driver_payouts dp
-     INNER JOIN drivers d ON d.id = dp.driver_id
-     WHERE ${whereSql}
-     ORDER BY dp.payment_period_end DESC, dp.created_at DESC
-     LIMIT 10000`,
-    params,
-  );
-  return rows;
-}
-
 router.get("/reports/export", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
 
-  const statusRaw = req.query.status != null && String(req.query.status).trim() !== "" ? String(req.query.status) : null;
-  const status = statusRaw && PAY_STATUSES.has(statusRaw) ? statusRaw : null;
-  const from = typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
-  const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
-  const q = typeof req.query.q === "string" && req.query.q.trim() !== "" ? req.query.q : null;
-  const driverIdExport =
-    typeof req.query.driverId === "string" && UUID_RE.test(req.query.driverId) ? req.query.driverId : null;
+  const formatRaw =
+    req.query.format != null && String(req.query.format).trim() !== "" ? String(req.query.format) : "csv";
+  const format = formatRaw.toLowerCase();
+  const filters = parsePayoutReportFilters(req.query as PayoutFilterQuery);
 
   try {
-    const rows = await fetchPayoutExportRows(orgId, status, from, to, q, driverIdExport);
+    const rows = await fetchEarningsReportRows(orgId, filters, REPORT_MAX_ROWS);
+    const summary = await fetchEarningsReportSummary(orgId, filters);
+
+    if (format === "pdf") {
+      return res.json({
+        items: rows,
+        summary,
+        truncated: summary.rowCount > rows.length,
+        limit: REPORT_MAX_ROWS,
+      });
+    }
+    if (format !== "csv") {
+      return res.status(400).json({ message: "format must be csv or pdf" });
+    }
+
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const header = [
       "id",
       "driver_id",
+      "driver_name",
       "first_name",
       "last_name",
       "phone",
       "period_start",
       "period_end",
+      "total_revenue",
       "net_payout",
       "vehicle_rental_fee",
       "status",
@@ -1029,11 +1142,13 @@ router.get("/reports/export", async (req, res) => {
         [
           r.id,
           r.driver_id,
+          esc(r.driver_name),
           esc(r.first_name),
           esc(r.last_name),
           r.phone != null ? esc(r.phone) : "",
           r.payment_period_start,
           r.payment_period_end,
+          r.total_gross_earnings ?? "",
           r.net_driver_payout ?? "",
           r.vehicle_rental_fee ?? "",
           r.payment_status,

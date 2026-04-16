@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
@@ -27,12 +27,22 @@ export function EarningsPayoutsPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [payingRowId, setPayingRowId] = useState<string | null>(null);
 
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => window.clearTimeout(id);
+  }, [q]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQ]);
+
   const query = useQuery({
-    queryKey: ["earnings", "payouts", page, status, from, to, q, driverIdFromUrl],
+    queryKey: ["earnings", "payouts", page, status, from, to, debouncedQ, driverIdFromUrl],
     queryFn: () =>
       getEarningsPayouts({
         page,
@@ -40,7 +50,7 @@ export function EarningsPayoutsPage() {
         status: status || undefined,
         from: from || undefined,
         to: to || undefined,
-        q: q.trim() || undefined,
+        q: debouncedQ || undefined,
         driverId: driverIdFromUrl,
       }).then((r) => r.data),
     enabled: user?.role === "admin" || user?.role === "accountant",
@@ -50,7 +60,7 @@ export function EarningsPayoutsPage() {
   const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / (query.data?.pageSize ?? 25)));
 
   const detailsQuery = useQuery({
-    queryKey: ["earnings", "payout-proration-details", page, status, from, to, q, driverIdFromUrl],
+    queryKey: ["earnings", "payout-proration-details", page, status, from, to, debouncedQ, driverIdFromUrl],
     queryFn: () =>
       getPayoutsWithProrationDetails({
         page,
@@ -58,7 +68,7 @@ export function EarningsPayoutsPage() {
         status: status || undefined,
         from: from || undefined,
         to: to || undefined,
-        q: q.trim() || undefined,
+        q: debouncedQ || undefined,
         driverId: driverIdFromUrl,
       }).then((r) => r.data),
     enabled: user?.role === "admin" || user?.role === "accountant",
@@ -173,16 +183,10 @@ export function EarningsPayoutsPage() {
               <label className="block text-xs text-slate-600 mb-1">Search</label>
               <input
                 type="search"
-                placeholder="Name or phone"
+                placeholder="Name, phone, platform ID"
                 className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm min-h-[44px]"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    setPage(1);
-                    void query.refetch();
-                  }
-                }}
               />
             </div>
           </div>
