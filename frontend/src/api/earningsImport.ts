@@ -21,6 +21,15 @@ export interface EarningsPreviewRow {
   };
 }
 
+export interface EarningsPreviewAggregates {
+  /** Rows that will be inserted (matched driver, date, and money present). */
+  valid: number;
+  /** Rows skipped on commit (missing driver, date, or money). */
+  invalid: number;
+  /** Rows with account-opening fee present (informational). */
+  warnings: number;
+}
+
 export interface EarningsPreviewResponse {
   importId: string;
   platform: string;
@@ -33,8 +42,17 @@ export interface EarningsPreviewResponse {
   weekStart: string;
   weekEnd: string;
   warnings: string[];
+  /** Empty after server change; use GET preview-rows for data. */
   previewRows: EarningsPreviewRow[];
+  aggregates?: EarningsPreviewAggregates;
 }
+
+export type EarningsPreviewRowsPage = {
+  offset: number;
+  limit: number;
+  total: number;
+  rows: EarningsPreviewRow[];
+};
 
 export interface EarningsCommitResponse {
   importId: string;
@@ -57,6 +75,12 @@ export function previewEarningsImport(file: File) {
   const fd = new FormData();
   fd.append("file", file);
   return api.post<EarningsPreviewResponse>("/earnings/import/preview", fd);
+}
+
+export function fetchEarningsPreviewRows(importId: string, offset: number, limit: number) {
+  return api.get<EarningsPreviewRowsPage>(`/earnings/import/${importId}/preview-rows`, {
+    params: { offset, limit },
+  });
 }
 
 export type EarningsCommitOptions = {

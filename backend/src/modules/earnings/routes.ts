@@ -3,7 +3,7 @@ import { authenticateJWT, requireRole } from "../../middleware/auth";
 import { pool, query } from "../../db/pool";
 import { earningsUpload } from "../../config/multer";
 import { buildColumnMap } from "./romanHeaderMap";
-import { rowCellsToNormalized } from "./normalizeRow";
+import { rowCellsToNormalized, type EarningsStagingPayload } from "./normalizeRow";
 import {
   detectPlatformWithMeta,
   isEarningsPlatform,
@@ -14,6 +14,7 @@ import { parseEarningsFile } from "./parseFile";
 import { DriverMatchIndex, type DriverMatchRow } from "./matchDriver";
 import { runEarningsCommitFromStaging } from "./earningsCommit";
 import { insertEarningsPreviewStaging } from "./earningsPreviewStage";
+import { stagingPayloadToPreviewRow } from "./previewRowMapper";
 
 const router = Router();
 
@@ -126,25 +127,19 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
     const { weekStart, weekEnd } = weekBoundsFromDates(dates);
 
     const index = await loadMatchIndex(orgId);
-    let matched = 0;
-    const previewSlice = normalizedRows.slice(0, 10).map((r, i) => {
-      const { driverId, matchMethod } = index.match(platform, r.hints);
-      if (driverId) matched += 1;
-      return {
-        rowIndex: i,
-        tripDate: r.tripDateIso,
-        gross: r.amounts.gross,
-        net: r.amounts.net,
-        transferTotal: r.amounts.transferTotal,
-        platformFee: r.amounts.platformFee,
-        dailyCash: r.amounts.dailyCash,
-        accountOpeningFee: r.amounts.accountOpeningFee,
-        tripCount: r.amounts.tripCount,
-        matchMethod,
-        driverMatched: !!driverId,
-        hints: r.hints,
-      };
-    });
+
+    let validForCommit = 0;
+    let invalidRows = 0;
+    let warningRows = 0;
+    for (const r of normalizedRows) {
+      const { driverId } = index.match(platform, r.hints);
+      const hasDate = !!r.tripDateIso;
+      const hasMoney =
+        r.amounts.gross != null || r.amounts.net != null || r.amounts.transferTotal != null;
+      if (driverId && hasDate && hasMoney) validForCommit += 1;
+      else invalidRows += 1;
+      if (r.amounts.accountOpeningFee != null && r.amounts.accountOpeningFee > 0) warningRows += 1;
+    }
 
     const totalMatchPreview = normalizedRows.filter((r) => index.match(platform, r.hints).driverId).length;
     const matchRate =
@@ -190,13 +185,69 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
       weekStart,
       weekEnd,
       warnings,
-      previewRows: previewSlice,
+      previewRows: [],
+      aggregates: {
+        valid: validForCommit,
+        invalid: invalidRows,
+        warnings: warningRows,
+      },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Import failed";
     // eslint-disable-next-line no-console
     console.error("Earnings preview error", err);
     return res.status(400).json({ message: msg });
+  }
+});
+
+router.get("/import/:id/preview-rows", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  const { id: importId } = req.params;
+  const offset = Math.max(0, parseInt(String(req.query.offset ?? "0"), 10) || 0);
+  const limitIn = parseInt(String(req.query.limit ?? "500"), 10) || 500;
+  const limit = Math.min(2000, Math.max(1, limitIn));
+
+  try {
+    const { rows: impRows } = await query<{ platform: string }>(
+      `SELECT platform FROM earnings_imports
+       WHERE id = $1::uuid AND organization_id = $2::uuid AND status = 'preview'`,
+      [importId, orgId],
+    );
+    if (!impRows[0]) {
+      return res.status(404).json({ message: "Preview import not found or not in preview status" });
+    }
+    const platform = impRows[0].platform as EarningsPlatform;
+    if (!isEarningsPlatform(platform)) {
+      return res.status(400).json({ message: "Invalid platform on import" });
+    }
+
+    const { rows: countRows } = await query<{ c: string }>(
+      `SELECT COUNT(*)::text AS c FROM earnings_import_staging WHERE import_id = $1::uuid`,
+      [importId],
+    );
+    const total = parseInt(countRows[0]?.c ?? "0", 10);
+
+    const { rows: staging } = await query<{ row_index: number; payload: EarningsStagingPayload }>(
+      `SELECT row_index, payload FROM earnings_import_staging
+       WHERE import_id = $1::uuid
+       ORDER BY row_index ASC
+       OFFSET $2 LIMIT $3`,
+      [importId, offset, limit],
+    );
+
+    const index = await loadMatchIndex(orgId);
+    const previewRows = staging.map((r) =>
+      stagingPayloadToPreviewRow(r.row_index, r.payload, platform, index),
+    );
+
+    return res.json({ offset, limit, total, rows: previewRows });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Earnings preview-rows error", err);
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 
