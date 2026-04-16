@@ -9,6 +9,10 @@ function payoutPeriodLabel(row: PayoutListItem): string {
   return `${start} ${end}`.trim();
 }
 
+function payoutVehicleRentalLabel(row: PayoutListItem): string {
+  return row.vehicle_rental_fee != null ? String(row.vehicle_rental_fee) : "";
+}
+
 function payoutMatchesQuery(row: PayoutListItem, query: string, statusFilter: string): boolean {
   const q = query.trim().toLowerCase();
   if (statusFilter && row.payment_status !== statusFilter) return false;
@@ -20,8 +24,10 @@ function payoutMatchesQuery(row: PayoutListItem, query: string, statusFilter: st
     row.first_name ?? "",
     row.last_name ?? "",
     row.phone ?? "",
+    row.platform_id ?? "",
     row.payment_status ?? "",
     payoutPeriodLabel(row),
+    payoutVehicleRentalLabel(row),
   ];
   return haystacks.some((v) => String(v).toLowerCase().includes(q));
 }

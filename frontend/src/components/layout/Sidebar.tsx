@@ -6,10 +6,8 @@ import { LogoutButton } from "../UI/LogoutButton";
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: DashboardIcon },
   { to: "/drivers", label: "Drivers", icon: DriversIcon },
-  { to: "/drivers/new", label: "Add driver", icon: AddIcon },
   { to: "/vehicles", label: "Vehicles", icon: VehiclesIcon },
   { to: "/rentals/overdue", label: "Overdue rentals", icon: VehiclesIcon },
-  { to: "/vehicles/new", label: "Add vehicle", icon: AddIcon },
 ];
 
 const earningsSubItems = [

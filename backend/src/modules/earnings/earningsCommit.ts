@@ -42,6 +42,7 @@ async function loadMatchIndex(orgId: string): Promise<DriverMatchIndex> {
 
 type InsertRow = {
   driver_id: string;
+  platform_id: string | null;
   trip_date: string;
   trip_count: number | null;
   gross: number | null;
@@ -56,6 +57,23 @@ type InsertRow = {
   driver_payout: number;
   commission_type: string;
 };
+
+function payoutPlatformIdForDriver(drv: DriverMatchRow, platform: EarningsPlatform): string | null {
+  switch (platform) {
+    case "uber":
+      return drv.uber_driver_id ?? null;
+    case "bolt":
+      return drv.bolt_driver_id ?? null;
+    case "glovo":
+      return drv.glovo_courier_id ?? null;
+    case "bolt_courier":
+      return drv.bolt_courier_id ?? null;
+    case "wolt_courier":
+      return drv.wolt_courier_id ?? null;
+    default:
+      return null;
+  }
+}
 
 /** Build rows and write earnings_records, driver_payouts rollup, finalize import (same transaction as caller). */
 export async function runEarningsCommitFromStaging(
@@ -131,6 +149,7 @@ export async function runEarningsCommitFromStaging(
 
     toInsert.push({
       driver_id: driverId,
+      platform_id: payoutPlatformIdForDriver(drv, platformEff),
       trip_date: tripDateIso,
       trip_count: p.amounts.tripCount,
       gross: g,
@@ -240,6 +259,7 @@ export async function runEarningsCommitFromStaging(
       payout: number;
       dailyCash: number;
       vehicleRentalFee: number;
+      platformId: string | null;
     }
   >();
   for (const r of toInsert) {
@@ -251,6 +271,7 @@ export async function runEarningsCommitFromStaging(
       payout: 0,
       dailyCash: 0,
       vehicleRentalFee: 0,
+      platformId: null,
     };
     cur.gross += r.gross ?? 0;
     cur.fee += r.fee ?? 0;
@@ -258,6 +279,7 @@ export async function runEarningsCommitFromStaging(
     cur.comm += r.company_commission;
     cur.payout += r.driver_payout;
     cur.dailyCash += r.daily_cash ?? 0;
+    cur.platformId ??= r.platform_id ?? null;
     byDriver.set(r.driver_id, cur);
   }
   for (const [driverId, agg] of byDriver) {
@@ -267,13 +289,14 @@ export async function runEarningsCommitFromStaging(
   for (const [driverId, agg] of byDriver) {
     await client.query(
       `INSERT INTO driver_payouts (
-          organization_id, driver_id, payment_period_start, payment_period_end,
+          organization_id, driver_id, platform_id, payment_period_start, payment_period_end,
           total_gross_earnings, total_platform_fees, total_net_earnings,
           total_daily_cash,
           company_commission, net_driver_payout, vehicle_rental_fee, payment_status
-        ) VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9, $10, $11, 'pending')
+        ) VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, 'pending')
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
         DO UPDATE SET
+          platform_id = COALESCE(driver_payouts.platform_id, EXCLUDED.platform_id),
           total_gross_earnings = COALESCE(driver_payouts.total_gross_earnings, 0) + EXCLUDED.total_gross_earnings,
           total_platform_fees = COALESCE(driver_payouts.total_platform_fees, 0) + EXCLUDED.total_platform_fees,
           total_net_earnings = COALESCE(driver_payouts.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
@@ -284,6 +307,7 @@ export async function runEarningsCommitFromStaging(
       [
         orgId,
         driverId,
+        agg.platformId,
         weekStartEff,
         weekEndEff,
         agg.gross,
