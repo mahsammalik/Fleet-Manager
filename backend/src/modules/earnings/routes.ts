@@ -779,7 +779,10 @@ router.get("/payouts", async (req, res) => {
               dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
               dp.total_gross_earnings::text, dp.company_commission::text,
               dp.vehicle_rental_fee::text,
-              d.first_name, d.last_name, d.phone
+              d.first_name, d.last_name, d.phone,
+              CONCAT(d.first_name, ' ', d.last_name) AS driver_name,
+              TO_CHAR(dp.payment_period_start, 'YYYY-MM-DD') AS period_start_label,
+              TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label
        FROM driver_payouts dp
        INNER JOIN drivers d ON d.id = dp.driver_id
        WHERE ${whereSql}
