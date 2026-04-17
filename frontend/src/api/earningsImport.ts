@@ -1,4 +1,5 @@
-import { api } from "../lib/api";
+import { useAuthStore } from "../store/authStore";
+import { api, apiBaseURL } from "../lib/api";
 
 export interface EarningsPreviewRow {
   rowIndex: number;
@@ -19,6 +20,8 @@ export interface EarningsPreviewRow {
     phone?: string;
     plate?: string;
   };
+  /** From server preview mapper; client may infer from transferTotal when absent. */
+  negativeTransferTotal?: boolean;
 }
 
 export interface EarningsPreviewAggregates {
@@ -28,6 +31,8 @@ export interface EarningsPreviewAggregates {
   invalid: number;
   /** Rows with account-opening fee present (informational). */
   warnings: number;
+  /** Rows with negative TVT (transfer total) — recorded as driver debt on commit. */
+  debtRows?: number;
 }
 
 export interface EarningsPreviewResponse {
@@ -98,4 +103,26 @@ export function commitEarningsImport(importId: string, opts?: EarningsCommitOpti
 
 export function cancelEarningsImport(importId: string) {
   return api.delete(`/earnings/import/${importId}`);
+}
+
+/**
+ * Best-effort cancel when the tab is closing or navigating away without a full axios round-trip
+ * (e.g. `beforeunload` / `pagehide`). Uses `fetch` + `keepalive` so the DELETE may complete after unload.
+ * Reuses the same DELETE endpoint as {@link cancelEarningsImport}.
+ */
+export function cancelStagedImportKeepalive(importId: string): void {
+  const id = String(importId ?? "").trim();
+  if (!id) return;
+  const token = useAuthStore.getState().token;
+  if (!token) return;
+  const base = String(apiBaseURL).replace(/\/$/, "");
+  try {
+    void fetch(`${base}/earnings/import/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    });
+  } catch {
+    /* ignore */
+  }
 }

@@ -44,9 +44,19 @@ export interface EarningsStagingPayload {
   rawSample: Record<string, string>;
 }
 
+/** Romanian-style amounts: optional thousands `.`, optional `,` decimals; leading `-` supported. */
 function parseRoNumber(s: string): number | null {
-  const t = s.replace(/\s/g, "").replace(",", ".");
+  let t = s.trim().replace(/\s/g, "");
   if (!t || t === "-") return null;
+  const comma = t.indexOf(",");
+  const dot = t.indexOf(".");
+  if (comma !== -1 && comma > dot) {
+    t = `${t.slice(0, comma).replace(/\./g, "")}.${t.slice(comma + 1)}`;
+  } else if (comma !== -1 && dot === -1) {
+    t = t.replace(",", ".");
+  } else {
+    t = t.replace(/,/g, "");
+  }
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
 }
@@ -133,13 +143,12 @@ export function rowCellsToNormalized(
         break;
       case "transfer_total": {
         const v = parseRoNumber(raw);
-        amounts.transferTotal = v === null ? null : Math.abs(v);
+        amounts.transferTotal = v;
         break;
       }
       case "platform_fee": {
         const v = parseRoNumber(raw);
-        // Exports may show platform fee as negative; store magnitude as positive.
-        amounts.platformFee = v === null ? null : Math.abs(v);
+        amounts.platformFee = v;
         break;
       }
       case "daily_cash":
@@ -173,11 +182,7 @@ export function rowCellsToNormalized(
     amounts.gross !== null &&
     amounts.net !== null
   ) {
-    amounts.platformFee = Math.abs(amounts.gross - amounts.net);
-  }
-
-  if (amounts.platformFee !== null && amounts.platformFee < 0) {
-    amounts.platformFee = Math.abs(amounts.platformFee);
+    amounts.platformFee = amounts.gross - amounts.net;
   }
 
   return { tripDateIso, hints, amounts, rawSample };

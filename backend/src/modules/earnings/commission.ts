@@ -18,6 +18,7 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** `cash_commission` is rate × signed daily cash; earnings commit / DB payout subtract `ABS(cash_commission)` for driver_net. */
 export function computeCommissionComponents(
   driver: DriverCommissionRow,
   transferAmount: number,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { EarningsReportRow } from "../../api/earnings";
 import { formatCurrency } from "../../utils/currency";
 
-type SortKey = "driver" | "period" | "revenue" | "rental" | "payout" | "status";
+type SortKey = "driver" | "period" | "revenue" | "rental" | "payout" | "debt" | "status";
 
 type SortState = {
   key: SortKey;
@@ -34,8 +34,14 @@ function statusClass(status: string) {
       return "bg-emerald-100 text-emerald-800";
     case "approved":
       return "bg-sky-100 text-sky-800";
+    case "processing":
+      return "bg-violet-100 text-violet-800";
+    case "failed":
+      return "bg-rose-100 text-rose-800";
     case "hold":
       return "bg-amber-100 text-amber-900";
+    case "debt":
+      return "bg-red-100 text-red-800";
     case "pending":
     default:
       return "bg-slate-100 text-slate-700";
@@ -60,6 +66,7 @@ export function EarningsReportsPreviewTable({
             r.first_name,
             r.last_name,
             r.phone ?? "",
+            r.platform_id ?? "",
             r.payment_status,
             r.period_start_label,
             r.period_end_label,
@@ -80,6 +87,8 @@ export function EarningsReportsPreviewTable({
         return (asNumber(a.total_gross_earnings) - asNumber(b.total_gross_earnings)) * dir;
       if (sort.key === "rental")
         return (asNumber(a.vehicle_rental_fee) - asNumber(b.vehicle_rental_fee)) * dir;
+      if (sort.key === "debt")
+        return (asNumber(a.remaining_debt_amount) - asNumber(b.remaining_debt_amount)) * dir;
       return (asNumber(a.net_driver_payout) - asNumber(b.net_driver_payout)) * dir;
     });
     return sorted;
@@ -109,7 +118,7 @@ export function EarningsReportsPreviewTable({
             id="reports-table-search"
             type="search"
             className="w-full rounded-lg border border-slate-300 bg-white/80 px-3 py-2 text-sm"
-            placeholder="Driver, phone, status, period"
+            placeholder="Driver, phone, platform ID, debt, period"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             disabled={loading}
@@ -134,7 +143,7 @@ export function EarningsReportsPreviewTable({
 
       <div className={`${mobileOpen ? "block" : "hidden"} overflow-x-auto rounded-xl border border-slate-200/80 bg-white/50 md:block`}>
         <div className={scrollShellClass}>
-          <table className="min-w-[980px] w-full border-collapse text-left text-xs">
+          <table className="min-w-[1120px] w-full border-collapse text-left text-xs">
             <thead className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50/95 text-slate-600 shadow-[0_1px_0_rgb(226_232_240)]">
               <tr>
                 <th className="px-3 py-2.5">
@@ -162,6 +171,11 @@ export function EarningsReportsPreviewTable({
                     Net Payout{sortLabel("payout")}
                   </button>
                 </th>
+                <th className="px-3 py-2.5 text-right">
+                  <button type="button" className="font-medium hover:text-slate-900" onClick={() => toggleSort("debt")}>
+                    Remaining Debt{sortLabel("debt")}
+                  </button>
+                </th>
                 <th className="px-3 py-2.5">
                   <button type="button" className="font-medium hover:text-slate-900" onClick={() => toggleSort("status")}>
                     Status{sortLabel("status")}
@@ -172,13 +186,13 @@ export function EarningsReportsPreviewTable({
             <tbody className="divide-y divide-slate-100 text-slate-800">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-slate-500">
                     Loading live preview...
                   </td>
                 </tr>
               ) : visibleRows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-slate-500">
                     No rows match the current filters.
                   </td>
                 </tr>
@@ -200,6 +214,9 @@ export function EarningsReportsPreviewTable({
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold">
                       {formatCurrency(asNumber(row.net_driver_payout))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-red-700">
+                      {formatCurrency(asNumber(row.remaining_debt_amount))}
                     </td>
                     <td className="px-3 py-2">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${statusClass(row.payment_status)}`}>

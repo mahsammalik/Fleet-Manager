@@ -9,6 +9,9 @@ import {
   type EarningsPreviewResponse,
 } from "../../api/earningsImport";
 import { EarningsImportPreviewVirtualTable } from "../earnings/EarningsImportPreviewVirtualTable";
+import { ConfirmDialog } from "../UI/ConfirmDialog";
+import { useCsvValidation } from "../../hooks/useCsvValidation";
+import { useUnsavedImportNavigationGuard } from "../../hooks/useUnsavedImportNavigationGuard";
 
 const PROVIDER_OPTIONS = [
   { value: "uber", label: "Uber" },
@@ -63,11 +66,26 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
   const [selectedPlatform, setSelectedPlatform] = useState<string>("uber");
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
+  const [commitImportOpen, setCommitImportOpen] = useState(false);
+
+  const { setClientDebtScan, runClientDebtScan, debtSummaryLine } = useCsvValidation(preview);
+
+  const { blocker: importNavBlocker } = useUnsavedImportNavigationGuard({
+    isDirty: Boolean(preview),
+    enabled: open,
+    stagedImportId: preview?.importId ?? null,
+  });
+
+  useEffect(() => {
+    if (!preview) setCommitImportOpen(false);
+  }, [preview]);
 
   useEffect(() => {
     if (!open) {
       setPreview(null);
       setLocalError(null);
+      setClientDebtScan(null);
+      setCommitImportOpen(false);
       return;
     }
     const { start, end } = weeklyDefaultRange();
@@ -101,7 +119,9 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
         weekEnd: args.weekEnd,
       }),
     onSuccess: () => {
+      setCommitImportOpen(false);
       setPreview(null);
+      setClientDebtScan(null);
       setLocalError(null);
       onClose();
       void queryClient.invalidateQueries({ queryKey: ["earnings"] });
@@ -114,7 +134,9 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
     mutationFn: (importId: string) => cancelEarningsImport(importId),
     onSuccess: () => {
       setPreview(null);
+      setClientDebtScan(null);
       setLocalError(null);
+      void queryClient.invalidateQueries({ queryKey: ["earnings", "imports"] });
     },
     onError: (e) => setLocalError(errMessage(e)),
   });
@@ -169,7 +191,11 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                 onChange={(ev) => {
                   const f = ev.target.files?.[0];
                   ev.target.value = "";
-                  if (f) previewMut.mutate(f);
+                  if (f) {
+                    setClientDebtScan(null);
+                    void runClientDebtScan(f);
+                    previewMut.mutate(f);
+                  }
                 }}
               />
             </label>
@@ -262,6 +288,13 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
               </div>
             </div>
 
+            {debtSummaryLine && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50/95 px-3 py-2 text-sm text-rose-950">
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-800">Debt detection</p>
+                <p className="mt-0.5 font-medium text-rose-900">{debtSummaryLine}</p>
+              </div>
+            )}
+
             {preview.warnings.length > 0 && (
               <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
                 <p className="text-xs font-semibold text-amber-900 mb-1">Data quality</p>
@@ -289,14 +322,7 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
               <button
                 type="button"
                 disabled={busy || !periodValid}
-                onClick={() =>
-                  commitMut.mutate({
-                    importId: preview.importId,
-                    platform: selectedPlatform,
-                    weekStart: periodStart,
-                    weekEnd: periodEnd,
-                  })
-                }
+                onClick={() => setCommitImportOpen(true)}
                 className="rounded-lg bg-sky-600 text-white text-sm font-medium px-4 py-2 hover:bg-sky-700 disabled:opacity-50"
               >
                 {commitMut.isPending ? "Importing…" : "Confirm import (valid rows only)"}
@@ -319,6 +345,93 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={commitImportOpen && Boolean(preview)}
+        onClose={() => !commitMut.isPending && setCommitImportOpen(false)}
+        title="Commit this import?"
+        description={
+          preview ? (
+            <div className="space-y-2">
+              <p>
+                <span className="text-slate-500">File:</span>{" "}
+                <span className="font-medium text-slate-900">{preview.fileName}</span>
+              </p>
+              <p>
+                <span className="text-slate-500">Provider:</span>{" "}
+                <span className="font-medium text-slate-900">{providerLabel(selectedPlatform)}</span>
+              </p>
+              <p>
+                <span className="text-slate-500">Pay period:</span>{" "}
+                <span className="font-medium text-slate-900">
+                  {periodStart} → {periodEnd}
+                </span>
+              </p>
+              <p>
+                <span className="text-slate-500">Rows:</span>{" "}
+                <span className="font-medium tabular-nums text-slate-900">{preview.totalRows.toLocaleString()}</span>
+              </p>
+              {preview.aggregates != null && (
+                <p>
+                  <span className="text-slate-500">Valid rows (estimate):</span>{" "}
+                  <span className="font-semibold tabular-nums text-sky-800">
+                    {(preview.aggregates.valid ?? 0).toLocaleString()}
+                  </span>
+                </p>
+              )}
+              {debtSummaryLine && (
+                <p className="rounded-lg border border-rose-100 bg-rose-50/90 px-2 py-1.5 text-xs text-rose-900">
+                  {debtSummaryLine}
+                </p>
+              )}
+            </div>
+          ) : null
+        }
+        confirmLabel="Import now"
+        cancelLabel="Go back"
+        confirmVariant="primary"
+        isLoading={commitMut.isPending}
+        onConfirm={async () => {
+          if (!preview) return;
+          await commitMut.mutateAsync({
+            importId: preview.importId,
+            platform: selectedPlatform,
+            weekStart: periodStart,
+            weekEnd: periodEnd,
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={importNavBlocker.state === "blocked"}
+        rootClassName="z-[110]"
+        onClose={() => importNavBlocker.reset?.()}
+        title="Discard unsaved import?"
+        description={
+          <p>
+            You have a staged import preview. Leaving will{" "}
+            <span className="font-medium text-slate-800">delete it on the server</span> and you will need to upload the
+            file again.
+          </p>
+        }
+        confirmLabel="Discard and leave"
+        cancelLabel="Stay here"
+        confirmVariant="danger"
+        isLoading={cancelMut.isPending && importNavBlocker.state === "blocked"}
+        onConfirm={async () => {
+          const id = preview?.importId;
+          if (!id) {
+            importNavBlocker.proceed?.();
+            return;
+          }
+          try {
+            await cancelMut.mutateAsync(id);
+            importNavBlocker.proceed?.();
+          } catch {
+            importNavBlocker.reset?.();
+          }
+        }}
+      />
     </div>
   );
 }

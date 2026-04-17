@@ -67,10 +67,15 @@ export function EarningsReportsPage() {
       const csv = Papa.unparse(
         sourceRows.map((r) => ({
           driver: r.driver_name,
+          platform_id: r.platform_id ?? "",
           period: `${r.period_start_label} - ${r.period_end_label}`,
           total_revenue: r.total_gross_earnings ?? "",
+          raw_net_amount: r.raw_net_amount ?? "",
           vehicle_rental: r.vehicle_rental_fee ?? "",
           net_payout: r.net_driver_payout ?? "",
+          debt_amount: r.debt_amount ?? "",
+          debt_applied_amount: r.debt_applied_amount ?? "",
+          remaining_debt_amount: r.remaining_debt_amount ?? "",
           status: r.payment_status,
         })),
       );
@@ -178,9 +183,12 @@ export function EarningsReportsPage() {
                 >
                   <option value="">All</option>
                   <option value="pending">Pending</option>
+                  <option value="processing">Processing</option>
                   <option value="approved">Approved</option>
                   <option value="paid">Paid</option>
+                  <option value="failed">Failed</option>
                   <option value="hold">Hold</option>
+                  <option value="debt">Debt</option>
                 </select>
               </div>
               <div>
@@ -241,7 +249,7 @@ export function EarningsReportsPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
               <div className="rounded-xl border border-white/40 bg-white/70 px-4 py-3 shadow-sm">
                 <p className="text-xs text-slate-500">Total payout</p>
                 <p className="mt-1 text-base font-semibold text-slate-900">
@@ -258,6 +266,12 @@ export function EarningsReportsPage() {
                 <p className="text-xs text-slate-500">Vehicle rental total</p>
                 <p className="mt-1 text-base font-semibold text-slate-900">
                   {summary ? formatCurrency(summary.totalVehicleRental) : "—"}
+                </p>
+              </div>
+              <div className="rounded-xl border border-red-100 bg-red-50/70 px-4 py-3 shadow-sm">
+                <p className="text-xs text-red-600">Outstanding debt</p>
+                <p className="mt-1 text-base font-semibold text-red-800">
+                  {summary ? formatCurrency(summary.totalDebt) : "—"}
                 </p>
               </div>
             </div>

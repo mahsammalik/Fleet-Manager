@@ -20,6 +20,8 @@ export type EarningsPreviewRowDto = {
     phone?: string;
     plate?: string;
   };
+  /** True when TVT (transfer total) is negative — creates driver debt on commit. */
+  negativeTransferTotal: boolean;
 };
 
 export function stagingPayloadToPreviewRow(
@@ -29,6 +31,7 @@ export function stagingPayloadToPreviewRow(
   index: DriverMatchIndex,
 ): EarningsPreviewRowDto {
   const { driverId, matchMethod } = index.match(platform, p.hints);
+  const tt = p.amounts.transferTotal;
   return {
     rowIndex,
     tripDate: p.tripDateIso,
@@ -42,5 +45,6 @@ export function stagingPayloadToPreviewRow(
     matchMethod,
     driverMatched: !!driverId,
     hints: p.hints,
+    negativeTransferTotal: tt != null && tt < 0,
   };
 }
