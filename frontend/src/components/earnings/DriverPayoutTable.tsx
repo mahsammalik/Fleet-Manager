@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { PayoutListItem, PayoutProrationDetail } from "../../api/earnings";
 import { usePayoutSearch } from "../../hooks/usePayoutSearch";
+import { ConfirmDialog } from "../UI/ConfirmDialog";
 import { formatCurrency } from "../../utils/currency";
 
 type DriverPayoutTableProps = {
@@ -14,8 +15,8 @@ type DriverPayoutTableProps = {
   errorMessage?: string | null;
   onToggleSelection: (id: string) => void;
   onReplaceSelection: (ids: string[]) => void;
-  onPayNow: (id: string) => void;
-  onPaySelected: (ids: string[]) => void;
+  onPayNow: (id: string) => void | Promise<void>;
+  onPaySelected: (ids: string[]) => void | Promise<void>;
 };
 
 const BADGE_BY_STATUS: Record<string, string> = {
@@ -43,6 +44,10 @@ function includesQuery(value: string | null | undefined, query: string): boolean
   const q = query.trim().toLowerCase();
   if (!q) return false;
   return String(value ?? "").toLowerCase().includes(q);
+}
+
+function findPayoutRow(allRows: PayoutListItem[], id: string): PayoutListItem | undefined {
+  return allRows.find((r) => r.id === id);
 }
 
 function HighlightText({ text, query }: { text: string; query: string }) {
@@ -78,6 +83,10 @@ export function DriverPayoutTable({
   onPaySelected,
 }: DriverPayoutTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [payConfirm, setPayConfirm] = useState<
+    null | { kind: "one"; payoutId: string } | { kind: "many"; ids: string[] }
+  >(null);
+
   const {
     searchQuery,
     setSearchQuery,
@@ -102,6 +111,22 @@ export function DriverPayoutTable({
   const platformIdMatchCount = filteredRows.filter((r) => includesQuery(r.platform_id, debouncedQuery)).length;
 
   const showNoRows = !isLoading && filteredRows.length === 0;
+
+  const payConfirmRow = payConfirm?.kind === "one" ? findPayoutRow(rows, payConfirm.payoutId) : undefined;
+  const payConfirmBulkTotal =
+    payConfirm?.kind === "many"
+      ? payConfirm.ids.reduce((sum, id) => sum + toNum(findPayoutRow(rows, id)?.net_driver_payout), 0)
+      : 0;
+
+  const handlePayConfirm = async () => {
+    if (!payConfirm) return;
+    if (payConfirm.kind === "one") {
+      await onPayNow(payConfirm.payoutId);
+    } else {
+      await onPaySelected(payConfirm.ids);
+    }
+    setPayConfirm(null);
+  };
 
   return (
     <div className="space-y-4">
@@ -183,7 +208,7 @@ export function DriverPayoutTable({
           <button
             type="button"
             disabled={isPaying}
-            onClick={() => onPaySelected(selectedPendingIds)}
+            onClick={() => setPayConfirm({ kind: "many", ids: [...selectedPendingIds] })}
             className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
           >
             {isPaying ? "Updating…" : "Pay selected"}
@@ -306,7 +331,7 @@ export function DriverPayoutTable({
                             <button
                               type="button"
                               disabled={!isPending || isPaying}
-                              onClick={() => onPayNow(row.id)}
+                              onClick={() => setPayConfirm({ kind: "one", payoutId: row.id })}
                               className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
                             >
                               {isPayingRow ? "Paying…" : "Pay Now"}
@@ -453,7 +478,7 @@ export function DriverPayoutTable({
                     <button
                       type="button"
                       disabled={!isPending || isPaying}
-                      onClick={() => onPayNow(row.id)}
+                      onClick={() => setPayConfirm({ kind: "one", payoutId: row.id })}
                       className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
                     >
                       {isPayingRow ? "Paying…" : "Pay Now"}
@@ -506,6 +531,55 @@ export function DriverPayoutTable({
           </div>
         </>
       )}
+
+      <ConfirmDialog
+        open={payConfirm != null}
+        onClose={() => !isPaying && setPayConfirm(null)}
+        title={payConfirm?.kind === "many" ? "Pay multiple payouts?" : "Mark payout as paid?"}
+        description={
+          payConfirm?.kind === "one" && payConfirmRow ? (
+            <p>
+              You are about to record a payment of{" "}
+              <span className="font-semibold tabular-nums text-slate-900">
+                {formatCurrency(toNum(payConfirmRow.net_driver_payout))}
+              </span>{" "}
+              for{" "}
+              <span className="font-semibold text-slate-900">
+                {payConfirmRow.first_name} {payConfirmRow.last_name}
+              </span>
+              . This cannot be undone from here without admin support.
+            </p>
+          ) : payConfirm?.kind === "one" ? (
+            <p className="text-amber-800">
+              This payout is not visible in the current list; you can still confirm if you started payment from this
+              page.
+            </p>
+          ) : payConfirm?.kind === "many" ? (
+            <div className="space-y-2">
+              <p>
+                You are about to mark{" "}
+                <span className="font-semibold text-slate-900">{payConfirm.ids.length}</span> pending payout
+                {payConfirm.ids.length === 1 ? "" : "s"} as paid, for a combined total of{" "}
+                <span className="font-semibold tabular-nums text-slate-900">
+                  {formatCurrency(payConfirmBulkTotal)}
+                </span>
+                .
+              </p>
+              {payConfirmBulkTotal === 0 && payConfirm.ids.length > 0 && (
+                <p className="text-xs text-amber-800">
+                  Totals are based on rows visible in the current page response; verify amounts in the table before
+                  confirming.
+                </p>
+              )}
+            </div>
+          ) : null
+        }
+        confirmLabel={payConfirm?.kind === "many" ? "Pay all selected" : "Confirm payment"}
+        cancelLabel="Go back"
+        confirmVariant="primary"
+        isLoading={isPaying}
+        onConfirm={handlePayConfirm}
+      />
     </div>
   );
 }

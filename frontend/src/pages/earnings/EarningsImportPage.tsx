@@ -13,7 +13,9 @@ import {
 import { syncEarningsVehicleRentals } from "../../api/earnings";
 import { getEarningsImports } from "../../api/earnings";
 import { EarningsImportPreviewVirtualTable } from "../../components/earnings/EarningsImportPreviewVirtualTable";
+import { ConfirmDialog } from "../../components/UI/ConfirmDialog";
 import { useCsvValidation } from "../../hooks/useCsvValidation";
+import { useUnsavedImportNavigationGuard } from "../../hooks/useUnsavedImportNavigationGuard";
 
 const PROVIDER_OPTIONS = [
   { value: "uber", label: "Uber" },
@@ -65,8 +67,14 @@ export function EarningsImportPage() {
   const [selectedPlatform, setSelectedPlatform] = useState<string>("uber");
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
+  const [commitImportOpen, setCommitImportOpen] = useState(false);
 
   const { setClientDebtScan, runClientDebtScan, debtSummaryLine } = useCsvValidation(preview);
+
+  const { blocker: importNavBlocker } = useUnsavedImportNavigationGuard({
+    isDirty: Boolean(preview),
+    stagedImportId: preview?.importId ?? null,
+  });
 
   useEffect(() => {
     const { start, end } = weeklyDefaultRange();
@@ -77,6 +85,10 @@ export function EarningsImportPage() {
   useEffect(() => {
     if (preview) setSelectedPlatform(preview.platform);
   }, [preview?.importId]);
+
+  useEffect(() => {
+    if (!preview) setCommitImportOpen(false);
+  }, [preview]);
 
   const importsQuery = useQuery({
     queryKey: ["earnings", "imports"],
@@ -379,14 +391,7 @@ export function EarningsImportPage() {
               <button
                 type="button"
                 disabled={busy || !periodValid}
-                onClick={() =>
-                  commitMut.mutate({
-                    importId: preview.importId,
-                    platform: selectedPlatform,
-                    weekStart: periodStart,
-                    weekEnd: periodEnd,
-                  })
-                }
+                onClick={() => setCommitImportOpen(true)}
                 className="rounded-lg bg-sky-600 text-white text-sm font-medium px-4 py-2.5 min-h-[44px] hover:bg-sky-700 disabled:opacity-50"
               >
                 {commitMut.isPending ? "Importing…" : "Confirm import (valid rows only)"}
@@ -463,6 +468,104 @@ export function EarningsImportPage() {
           </div>
         </section>
       </div>
+
+      <ConfirmDialog
+        open={commitImportOpen && Boolean(preview)}
+        onClose={() => !commitMut.isPending && setCommitImportOpen(false)}
+        title="Commit this CSV import?"
+        description={
+          preview ? (
+            <div className="space-y-2">
+              <p>
+                <span className="text-slate-500">File:</span>{" "}
+                <span className="font-medium text-slate-900">{preview.fileName}</span>
+              </p>
+              <p>
+                <span className="text-slate-500">Provider:</span>{" "}
+                <span className="font-medium text-slate-900">{providerLabel(selectedPlatform)}</span>
+              </p>
+              <p>
+                <span className="text-slate-500">Pay period:</span>{" "}
+                <span className="font-medium text-slate-900">
+                  {periodStart} → {periodEnd}
+                </span>
+              </p>
+              <p>
+                <span className="text-slate-500">Rows in file:</span>{" "}
+                <span className="font-medium tabular-nums text-slate-900">{preview.totalRows.toLocaleString()}</span>
+              </p>
+              {preview.aggregates != null && (
+                <p>
+                  <span className="text-slate-500">Estimated valid rows to insert:</span>{" "}
+                  <span className="font-semibold tabular-nums text-sky-800">
+                    {(preview.aggregates.valid ?? 0).toLocaleString()}
+                  </span>
+                  {typeof preview.aggregates.debtRows === "number" && preview.aggregates.debtRows > 0 && (
+                    <span className="block mt-1 text-rose-800 font-medium">
+                      Includes {preview.aggregates.debtRows.toLocaleString()} row
+                      {preview.aggregates.debtRows === 1 ? "" : "s"} with negative TVT (driver debt).
+                    </span>
+                  )}
+                </p>
+              )}
+              {debtSummaryLine && (
+                <p className="rounded-lg border border-rose-100 bg-rose-50/90 px-2 py-1.5 text-xs text-rose-900">
+                  {debtSummaryLine}
+                </p>
+              )}
+              <p className="text-xs text-slate-500 pt-1">
+                Only rows with a matched driver and money fields are written. This updates driver payout totals for the
+                selected period.
+              </p>
+            </div>
+          ) : null
+        }
+        confirmLabel="Import now"
+        cancelLabel="Go back"
+        confirmVariant="primary"
+        isLoading={commitMut.isPending}
+        onConfirm={async () => {
+          if (!preview) return;
+          await commitMut.mutateAsync({
+            importId: preview.importId,
+            platform: selectedPlatform,
+            weekStart: periodStart,
+            weekEnd: periodEnd,
+          });
+          setCommitImportOpen(false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={importNavBlocker.state === "blocked"}
+        rootClassName="z-[110]"
+        onClose={() => importNavBlocker.reset?.()}
+        title="Discard unsaved import?"
+        description={
+          <p>
+            You have a staged import preview. Leaving will{" "}
+            <span className="font-medium text-slate-800">delete it on the server</span> and you will need to upload the
+            file again.
+          </p>
+        }
+        confirmLabel="Leave page"
+        cancelLabel="Stay on import"
+        confirmVariant="danger"
+        isLoading={cancelMut.isPending && importNavBlocker.state === "blocked"}
+        onConfirm={async () => {
+          const id = preview?.importId;
+          if (!id) {
+            importNavBlocker.proceed?.();
+            return;
+          }
+          try {
+            await cancelMut.mutateAsync(id);
+            importNavBlocker.proceed?.();
+          } catch {
+            importNavBlocker.reset?.();
+          }
+        }}
+      />
     </div>
   );
 }

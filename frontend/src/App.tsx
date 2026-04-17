@@ -1,5 +1,5 @@
 import React from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import { useAuthStore } from "./store/authStore";
 import { AppLayout } from "./components/layout/AppLayout";
 import { LoginPage } from "./pages/auth/LoginPage";
@@ -28,133 +28,132 @@ function ProtectedRoute({ children }: { children: React.ReactElement }) {
   return <AppLayout>{children}</AppLayout>;
 }
 
-export default function App() {
-  return (
-    <Routes>
-      <Route path="login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <DashboardPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/drivers"
-        element={
-          <ProtectedRoute>
-            <DriversListPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/drivers/new"
-        element={
-          <ProtectedRoute>
-            <AddDriverPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/drivers/:id/edit"
-        element={
-          <ProtectedRoute>
-            <EditDriverPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/drivers/:id"
-        element={
-          <ProtectedRoute>
-            <DriverDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/vehicles"
-        element={
-          <ProtectedRoute>
-            <VehiclesListPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/vehicles/new"
-        element={
-          <ProtectedRoute>
-            <AddVehiclePage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/vehicles/:id/edit"
-        element={
-          <ProtectedRoute>
-            <EditVehiclePage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/rentals/overdue"
-        element={
-          <ProtectedRoute>
-            <OverdueRentalsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/earnings"
-        element={
-          <ProtectedRoute>
-            <EarningsOverviewPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/earnings/import"
-        element={
-          <ProtectedRoute>
-            <EarningsImportPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/earnings/payouts"
-        element={
-          <ProtectedRoute>
-            <EarningsPayoutsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/earnings/reports"
-        element={
-          <ProtectedRoute>
-            <EarningsReportsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/vehicles/:id"
-        element={
-          <ProtectedRoute>
-            <VehicleDetailPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/vehicles/:id/documents"
-        element={
-          <ProtectedRoute>
-            <VehicleDocumentsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
-  );
-}
-
+/** Data router (required for `useBlocker`, e.g. unsaved import navigation guard). */
+export const appRouter = createBrowserRouter(
+  [
+    { path: "login", element: <LoginPage /> },
+    { path: "/register", element: <RegisterPage /> },
+    {
+      path: "/dashboard",
+      element: (
+        <ProtectedRoute>
+          <DashboardPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/drivers",
+      element: (
+        <ProtectedRoute>
+          <DriversListPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/drivers/new",
+      element: (
+        <ProtectedRoute>
+          <AddDriverPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/drivers/:id/edit",
+      element: (
+        <ProtectedRoute>
+          <EditDriverPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/drivers/:id",
+      element: (
+        <ProtectedRoute>
+          <DriverDetailPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/vehicles",
+      element: (
+        <ProtectedRoute>
+          <VehiclesListPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/vehicles/new",
+      element: (
+        <ProtectedRoute>
+          <AddVehiclePage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/vehicles/:id/edit",
+      element: (
+        <ProtectedRoute>
+          <EditVehiclePage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/rentals/overdue",
+      element: (
+        <ProtectedRoute>
+          <OverdueRentalsPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/earnings",
+      element: (
+        <ProtectedRoute>
+          <EarningsOverviewPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/earnings/import",
+      element: (
+        <ProtectedRoute>
+          <EarningsImportPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/earnings/payouts",
+      element: (
+        <ProtectedRoute>
+          <EarningsPayoutsPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/earnings/reports",
+      element: (
+        <ProtectedRoute>
+          <EarningsReportsPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/vehicles/:id",
+      element: (
+        <ProtectedRoute>
+          <VehicleDetailPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/vehicles/:id/documents",
+      element: (
+        <ProtectedRoute>
+          <VehicleDocumentsPage />
+        </ProtectedRoute>
+      ),
+    },
+    { path: "*", element: <Navigate to="/dashboard" replace /> },
+  ],
+  { basename: "/fleet" },
+);

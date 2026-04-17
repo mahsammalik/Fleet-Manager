@@ -215,13 +215,13 @@ export function EarningsPayoutsPage() {
           errorMessage={error}
           onToggleSelection={toggleOne}
           onReplaceSelection={(ids) => setSelected(new Set(ids))}
-          onPayNow={(id) => {
+          onPayNow={async (id) => {
             setPayingRowId(id);
-            bulkMut.mutate([id]);
+            await bulkMut.mutateAsync([id]);
           }}
-          onPaySelected={(ids) => {
+          onPaySelected={async (ids) => {
             setPayingRowId(null);
-            bulkMut.mutate(ids);
+            await bulkMut.mutateAsync(ids);
           }}
         />
 
