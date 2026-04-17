@@ -9,6 +9,7 @@ import {
   type EarningsPreviewResponse,
 } from "../../api/earningsImport";
 import { EarningsImportPreviewVirtualTable } from "../earnings/EarningsImportPreviewVirtualTable";
+import { useCsvValidation } from "../../hooks/useCsvValidation";
 
 const PROVIDER_OPTIONS = [
   { value: "uber", label: "Uber" },
@@ -64,10 +65,13 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
 
+  const { setClientDebtScan, runClientDebtScan, debtSummaryLine } = useCsvValidation(preview);
+
   useEffect(() => {
     if (!open) {
       setPreview(null);
       setLocalError(null);
+      setClientDebtScan(null);
       return;
     }
     const { start, end } = weeklyDefaultRange();
@@ -102,6 +106,7 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
       }),
     onSuccess: () => {
       setPreview(null);
+      setClientDebtScan(null);
       setLocalError(null);
       onClose();
       void queryClient.invalidateQueries({ queryKey: ["earnings"] });
@@ -114,6 +119,7 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
     mutationFn: (importId: string) => cancelEarningsImport(importId),
     onSuccess: () => {
       setPreview(null);
+      setClientDebtScan(null);
       setLocalError(null);
     },
     onError: (e) => setLocalError(errMessage(e)),
@@ -169,7 +175,11 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                 onChange={(ev) => {
                   const f = ev.target.files?.[0];
                   ev.target.value = "";
-                  if (f) previewMut.mutate(f);
+                  if (f) {
+                    setClientDebtScan(null);
+                    void runClientDebtScan(f);
+                    previewMut.mutate(f);
+                  }
                 }}
               />
             </label>
@@ -261,6 +271,13 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
                 </span>
               </div>
             </div>
+
+            {debtSummaryLine && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50/95 px-3 py-2 text-sm text-rose-950">
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-800">Debt detection</p>
+                <p className="mt-0.5 font-medium text-rose-900">{debtSummaryLine}</p>
+              </div>
+            )}
 
             {preview.warnings.length > 0 && (
               <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">

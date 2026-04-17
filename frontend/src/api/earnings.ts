@@ -55,6 +55,10 @@ export interface PayoutListItem {
   period_start_label?: string;
   period_end_label?: string;
   net_driver_payout: string | null;
+  raw_net_amount: string | null;
+  debt_amount: string | null;
+  debt_applied_amount: string | null;
+  remaining_debt_amount: string | null;
   vehicle_rental_fee: string | null;
   payment_status: string;
   payment_date: string | null;
@@ -76,6 +80,7 @@ export interface EarningsReportRow {
   id: string;
   driver_id: string;
   driver_name: string;
+  platform_id: string | null;
   payment_period_start: string;
   payment_period_end: string;
   period_start_label: string;
@@ -83,6 +88,10 @@ export interface EarningsReportRow {
   total_gross_earnings: string | null;
   vehicle_rental_fee: string | null;
   net_driver_payout: string | null;
+  raw_net_amount: string | null;
+  debt_amount: string | null;
+  debt_applied_amount: string | null;
+  remaining_debt_amount: string | null;
   payment_status: string;
   payment_date: string | null;
   first_name: string;
@@ -95,6 +104,7 @@ export interface EarningsReportSummary {
   totalNetPayout: number;
   totalVehicleRental: number;
   totalRevenue: number;
+  totalDebt: number;
 }
 
 export interface EarningsReportsResponse {
@@ -107,6 +117,7 @@ export interface EarningsReportsResponse {
 export interface PayoutProrationDetail {
   payout_id: string;
   vehicle_rental_fee: string | null;
+  remaining_debt_amount?: string | null;
   vehicle_rental_id: string | null;
   rental_amount: string | null;
   rental_start_date: string | null;

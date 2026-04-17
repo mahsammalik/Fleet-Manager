@@ -19,6 +19,8 @@ export interface EarningsPreviewRow {
     phone?: string;
     plate?: string;
   };
+  /** From server preview mapper; client may infer from transferTotal when absent. */
+  negativeTransferTotal?: boolean;
 }
 
 export interface EarningsPreviewAggregates {
@@ -28,6 +30,8 @@ export interface EarningsPreviewAggregates {
   invalid: number;
   /** Rows with account-opening fee present (informational). */
   warnings: number;
+  /** Rows with negative TVT (transfer total) — recorded as driver debt on commit. */
+  debtRows?: number;
 }
 
 export interface EarningsPreviewResponse {

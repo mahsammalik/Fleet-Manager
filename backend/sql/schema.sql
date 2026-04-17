@@ -172,20 +172,17 @@ CREATE TABLE IF NOT EXISTS earnings_records (
     driver_payout DECIMAL(10, 2),
     driver_payout_after_cash DECIMAL(10, 2)
       GENERATED ALWAYS AS (
-        GREATEST(
-          0,
-          ROUND(
-            (
-              COALESCE(
-                total_transfer_earnings,
-                net_earnings,
-                COALESCE(gross_earnings, 0) - COALESCE(platform_fee, 0),
-                gross_earnings,
-                0
-              ) - ABS(COALESCE(transfer_commission, 0)) - ABS(COALESCE(cash_commission, 0))
-            )::numeric,
-            2
-          )
+        ROUND(
+          (
+            COALESCE(
+              total_transfer_earnings,
+              net_earnings,
+              COALESCE(gross_earnings, 0) - COALESCE(platform_fee, 0),
+              gross_earnings,
+              0
+            ) - COALESCE(transfer_commission, 0) - ABS(COALESCE(cash_commission, 0))
+          )::numeric,
+          2
         )
       ) STORED,
     commission_type VARCHAR(50),
@@ -210,10 +207,14 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     bonuses DECIMAL(10, 2) DEFAULT 0,
     penalties DECIMAL(10, 2) DEFAULT 0,
     adjustments DECIMAL(10, 2) DEFAULT 0,
+    raw_net_amount DECIMAL(12, 2) DEFAULT 0,
+    debt_amount DECIMAL(12, 2) DEFAULT 0,
+    debt_applied_amount DECIMAL(12, 2) DEFAULT 0,
+    remaining_debt_amount DECIMAL(12, 2) DEFAULT 0,
     net_driver_payout DECIMAL(10, 2),
     vehicle_rental_id UUID,
     vehicle_rental_fee DECIMAL(12, 2) DEFAULT 0,
-    payment_status VARCHAR(50) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'approved', 'paid', 'hold')),
+    payment_status VARCHAR(50) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'processing', 'approved', 'paid', 'failed', 'hold', 'debt')),
     payment_date DATE,
     payment_method VARCHAR(50),
     transaction_ref VARCHAR(100),
@@ -483,13 +484,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Earnings payout guardrail: always deduct full company commission (incl. cash commission).
+-- Earnings payout: signed transfer commission; cash leg uses ABS(cash_commission) for deduction (Glovo / Excel parity).
 CREATE OR REPLACE FUNCTION trg_enforce_driver_payout_after_cash()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
   transfer_base numeric;
+  payout numeric;
 BEGIN
   transfer_base := COALESCE(
     NEW.total_transfer_earnings,
@@ -499,18 +501,17 @@ BEGIN
     0
   );
 
-  NEW.driver_payout := GREATEST(
-    0,
-    ROUND(
-      (
-        transfer_base
-        - ABS(COALESCE(NEW.transfer_commission, 0))
-        - ABS(COALESCE(NEW.cash_commission, 0))
-      )::numeric,
-      2
-    )
+  payout := ROUND(
+    (
+      transfer_base
+      - COALESCE(NEW.transfer_commission, 0)
+      - ABS(COALESCE(NEW.cash_commission, 0))
+    )::numeric,
+    2
   );
-  NEW.net_earnings := NEW.driver_payout;
+
+  NEW.driver_payout := payout;
+  NEW.net_earnings := payout;
   RETURN NEW;
 END;
 $$;
@@ -518,7 +519,13 @@ $$;
 DROP TRIGGER IF EXISTS trg_earnings_records_payout_after_cash ON earnings_records;
 CREATE TRIGGER trg_earnings_records_payout_after_cash
 BEFORE INSERT OR UPDATE OF
-  total_transfer_earnings, net_earnings, gross_earnings, platform_fee, company_commission
+  total_transfer_earnings,
+  net_earnings,
+  gross_earnings,
+  platform_fee,
+  transfer_commission,
+  cash_commission,
+  company_commission
 ON earnings_records
 FOR EACH ROW
 EXECUTE FUNCTION trg_enforce_driver_payout_after_cash();

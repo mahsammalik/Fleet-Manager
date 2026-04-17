@@ -42,6 +42,7 @@ function collectWarnings(
   }
   let noMoney = 0;
   let badMoney = 0;
+  let negativeTransfer = 0;
   let noDate = 0;
   const dupKeys = new Map<string, number>();
   for (const r of normalizedRows) {
@@ -51,13 +52,21 @@ function collectWarnings(
     if (g === null && n === null && tt === null) noMoney += 1;
     if (g !== null && g < 0) badMoney += 1;
     if (n !== null && n < 0) badMoney += 1;
-    if (tt !== null && tt < 0) badMoney += 1;
+    if (tt !== null && tt < 0) {
+      badMoney += 1;
+      negativeTransfer += 1;
+    }
     if (!r.tripDateIso) noDate += 1;
     const k = `${r.hints.courierId ?? ""}|${r.hints.phone ?? ""}|${r.hints.plate ?? ""}|${r.tripDateIso ?? ""}|${g ?? ""}|${n ?? ""}|${tt ?? ""}`;
     dupKeys.set(k, (dupKeys.get(k) ?? 0) + 1);
   }
   if (noMoney > 0) w.push(`${noMoney} row(s) have no gross, net, or TVT amount.`);
   if (badMoney > 0) w.push(`${badMoney} row(s) have negative amounts.`);
+  if (negativeTransfer > 0) {
+    w.push(
+      `${negativeTransfer} row(s) have negative transfer totals and will be treated as driver debt during payout commit.`,
+    );
+  }
   if (noDate > 0) w.push(`${noDate} row(s) are missing trip dates.`);
   const dups = [...dupKeys.values()].filter((c) => c > 1).length;
   if (dups > 0) w.push("Possible duplicate rows detected (same identifiers, date, and amounts).");
@@ -131,6 +140,7 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
     let validForCommit = 0;
     let invalidRows = 0;
     let warningRows = 0;
+    let debtCandidateRows = 0;
     for (const r of normalizedRows) {
       const { driverId } = index.match(platform, r.hints);
       const hasDate = !!r.tripDateIso;
@@ -139,6 +149,9 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
       if (driverId && hasDate && hasMoney) validForCommit += 1;
       else invalidRows += 1;
       if (r.amounts.accountOpeningFee != null && r.amounts.accountOpeningFee > 0) warningRows += 1;
+      if ((r.amounts.transferTotal ?? 0) < 0) {
+        debtCandidateRows += 1;
+      }
     }
 
     const totalMatchPreview = normalizedRows.filter((r) => index.match(platform, r.hints).driverId).length;
@@ -190,6 +203,7 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
         valid: validForCommit,
         invalid: invalidRows,
         warnings: warningRows,
+        debtRows: debtCandidateRows,
       },
     });
   } catch (err) {
@@ -440,35 +454,29 @@ router.put("/records/:id/recalculate", async (req, res) => {
     }>(
       `UPDATE earnings_records er
        SET
-         driver_payout = GREATEST(
-           0,
-           ROUND(
-             (
-               COALESCE(
-                 er.total_transfer_earnings,
-                 er.net_earnings,
-                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                 er.gross_earnings,
-                 0
-               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
-             )::numeric,
-             2
-           )
+         driver_payout = ROUND(
+           (
+             COALESCE(
+               er.total_transfer_earnings,
+               er.net_earnings,
+               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+               er.gross_earnings,
+               0
+             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
+           )::numeric,
+           2
          ),
-         net_earnings = GREATEST(
-           0,
-           ROUND(
-             (
-               COALESCE(
-                 er.total_transfer_earnings,
-                 er.net_earnings,
-                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                 er.gross_earnings,
-                 0
-               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
-             )::numeric,
-             2
-           )
+         net_earnings = ROUND(
+           (
+             COALESCE(
+               er.total_transfer_earnings,
+               er.net_earnings,
+               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+               er.gross_earnings,
+               0
+             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
+           )::numeric,
+           2
          )
        FROM earnings_imports ei
        WHERE er.import_id = ei.id
@@ -494,35 +502,29 @@ router.post("/records/recalculate-bulk", async (req, res) => {
     const result = await pool.query<{ id: string }>(
       `UPDATE earnings_records er
        SET
-         driver_payout = GREATEST(
-           0,
-           ROUND(
-             (
-               COALESCE(
-                 er.total_transfer_earnings,
-                 er.net_earnings,
-                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                 er.gross_earnings,
-                 0
-               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
-             )::numeric,
-             2
-           )
+         driver_payout = ROUND(
+           (
+             COALESCE(
+               er.total_transfer_earnings,
+               er.net_earnings,
+               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+               er.gross_earnings,
+               0
+             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
+           )::numeric,
+           2
          ),
-         net_earnings = GREATEST(
-           0,
-           ROUND(
-             (
-               COALESCE(
-                 er.total_transfer_earnings,
-                 er.net_earnings,
-                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                 er.gross_earnings,
-                 0
-               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
-             )::numeric,
-             2
-           )
+         net_earnings = ROUND(
+           (
+             COALESCE(
+               er.total_transfer_earnings,
+               er.net_earnings,
+               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+               er.gross_earnings,
+               0
+             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
+           )::numeric,
+           2
          )
        FROM earnings_imports ei
        WHERE er.import_id = ei.id
@@ -666,8 +668,20 @@ router.get("/records/payout-integrity", async (req, res) => {
          er.transfer_commission::text AS transfer_commission,
          er.vehicle_rental_fee::text,
          er.vehicle_rental_id::text,
-         GREATEST(
-           0,
+         ROUND(
+           (
+             COALESCE(
+               er.total_transfer_earnings,
+               er.net_earnings,
+               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
+               er.gross_earnings,
+               0
+             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
+           )::numeric,
+           2
+         )::text AS expected_payout,
+         (
+           COALESCE(er.driver_payout, 0)::numeric(12, 2) =
            ROUND(
              (
                COALESCE(
@@ -676,27 +690,9 @@ router.get("/records/payout-integrity", async (req, res) => {
                  COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
                  er.gross_earnings,
                  0
-               ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
+               ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
              )::numeric,
              2
-           )
-         )::text AS expected_payout,
-         (
-           COALESCE(er.driver_payout, 0)::numeric(12, 2) =
-           GREATEST(
-             0,
-             ROUND(
-               (
-                 COALESCE(
-                   er.total_transfer_earnings,
-                   er.net_earnings,
-                   COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                   er.gross_earnings,
-                   0
-                 ) - ABS(COALESCE(er.transfer_commission, 0)) - ABS(COALESCE(er.cash_commission, 0))
-               )::numeric,
-               2
-             )
            )::numeric(12, 2)
          ) AS ok
        FROM earnings_records er
@@ -715,7 +711,7 @@ router.get("/records/payout-integrity", async (req, res) => {
   }
 });
 
-const PAY_STATUSES = new Set(["pending", "approved", "paid", "hold"]);
+const PAY_STATUSES = new Set(["pending", "processing", "approved", "paid", "failed", "hold", "debt"]);
 
 const REPORT_MAX_ROWS = 10000;
 
@@ -805,6 +801,10 @@ type EarningsReportRow = {
   period_start_label: string;
   period_end_label: string;
   net_driver_payout: string | null;
+  raw_net_amount: string | null;
+  debt_amount: string | null;
+  debt_applied_amount: string | null;
+  remaining_debt_amount: string | null;
   vehicle_rental_fee: string | null;
   payment_status: string;
   payment_date: string | null;
@@ -828,7 +828,9 @@ async function fetchEarningsReportRows(
             dp.payment_period_start::text, dp.payment_period_end::text,
             TO_CHAR(dp.payment_period_start, 'YYYY-MM-DD') AS period_start_label,
             TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label,
-            dp.net_driver_payout::text, dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
+            dp.net_driver_payout::text, dp.raw_net_amount::text, dp.debt_amount::text,
+            dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
+            dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
             dp.total_gross_earnings::text,
             d.first_name, d.last_name, d.phone, CONCAT(d.first_name, ' ', d.last_name) AS driver_name
      FROM driver_payouts dp
@@ -848,12 +850,14 @@ async function fetchEarningsReportSummary(orgId: string, filters: PayoutReportFi
     total_net_payout: string | null;
     total_vehicle_rental: string | null;
     total_revenue: string | null;
+    total_debt: string | null;
   }>(
     `SELECT
        COUNT(*)::text AS row_count,
        COALESCE(SUM(dp.net_driver_payout), 0)::text AS total_net_payout,
        COALESCE(SUM(dp.vehicle_rental_fee), 0)::text AS total_vehicle_rental,
-       COALESCE(SUM(dp.total_gross_earnings), 0)::text AS total_revenue
+       COALESCE(SUM(dp.total_gross_earnings), 0)::text AS total_revenue,
+       COALESCE(SUM(dp.remaining_debt_amount), 0)::text AS total_debt
      FROM driver_payouts dp
      INNER JOIN drivers d ON d.id = dp.driver_id
      WHERE ${whereSql}`,
@@ -865,6 +869,7 @@ async function fetchEarningsReportSummary(orgId: string, filters: PayoutReportFi
     totalNetPayout: parseFloat(summary?.total_net_payout ?? "0"),
     totalVehicleRental: parseFloat(summary?.total_vehicle_rental ?? "0"),
     totalRevenue: parseFloat(summary?.total_revenue ?? "0"),
+    totalDebt: parseFloat(summary?.total_debt ?? "0"),
   };
 }
 
@@ -886,6 +891,7 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
     `SELECT dp.id::text, dp.driver_id::text, dp.platform_id,
             dp.payment_period_start::text, dp.payment_period_end::text,
             dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
+            dp.raw_net_amount::text, dp.debt_amount::text, dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.total_gross_earnings::text, dp.company_commission::text,
             dp.vehicle_rental_fee::text,
             d.first_name, d.last_name, d.phone,
@@ -1015,6 +1021,7 @@ router.get("/payouts/with-proration-details", async (req, res) => {
       `SELECT
           dp.id::text AS payout_id,
           dp.vehicle_rental_fee::text AS vehicle_rental_fee,
+          dp.remaining_debt_amount::text AS remaining_debt_amount,
           vr.id::text AS vehicle_rental_id,
           vr.total_rent_amount::text AS rental_amount,
           vr.rental_start_date::text AS rental_start_date,
@@ -1076,6 +1083,7 @@ router.patch("/payouts/bulk", async (req, res) => {
   }
 
   const setPaidDate = paymentStatus === "paid";
+  const blockPayableTransition = paymentStatus === "paid" || paymentStatus === "approved";
 
   try {
     const result = await pool.query(
@@ -1084,8 +1092,25 @@ router.patch("/payouts/bulk", async (req, res) => {
            payment_date = CASE WHEN $7 THEN COALESCE($3::date, CURRENT_DATE) ELSE payment_date END,
            payment_method = COALESCE($4, payment_method),
            transaction_ref = COALESCE($5, transaction_ref)
-       WHERE dp.organization_id = $1 AND dp.id = ANY($6::uuid[])`,
-      [orgId, paymentStatus, paymentDate, body.paymentMethod ?? null, body.transactionRef ?? null, ids, setPaidDate],
+       WHERE dp.organization_id = $1
+         AND dp.id = ANY($6::uuid[])
+         AND (
+           NOT $8::boolean
+           OR (
+             dp.payment_status IS DISTINCT FROM 'debt'
+             AND COALESCE(dp.remaining_debt_amount, 0) = 0
+           )
+         )`,
+      [
+        orgId,
+        paymentStatus,
+        paymentDate,
+        body.paymentMethod ?? null,
+        body.transactionRef ?? null,
+        ids,
+        setPaidDate,
+        blockPayableTransition,
+      ],
     );
     return res.json({ updatedRows: result.rowCount ?? 0 });
   } catch (err) {
@@ -1125,13 +1150,18 @@ router.get("/reports/export", async (req, res) => {
       "id",
       "driver_id",
       "driver_name",
+      "platform_id",
       "first_name",
       "last_name",
       "phone",
       "period_start",
       "period_end",
       "total_revenue",
+      "raw_net_amount",
       "net_payout",
+      "debt_amount",
+      "debt_applied_amount",
+      "remaining_debt_amount",
       "vehicle_rental_fee",
       "status",
       "paid_date",
@@ -1143,13 +1173,18 @@ router.get("/reports/export", async (req, res) => {
           r.id,
           r.driver_id,
           esc(r.driver_name),
+          r.platform_id ?? "",
           esc(r.first_name),
           esc(r.last_name),
           r.phone != null ? esc(r.phone) : "",
           r.payment_period_start,
           r.payment_period_end,
           r.total_gross_earnings ?? "",
+          r.raw_net_amount ?? "",
           r.net_driver_payout ?? "",
+          r.debt_amount ?? "",
+          r.debt_applied_amount ?? "",
+          r.remaining_debt_amount ?? "",
           r.vehicle_rental_fee ?? "",
           r.payment_status,
           r.payment_date ?? "",

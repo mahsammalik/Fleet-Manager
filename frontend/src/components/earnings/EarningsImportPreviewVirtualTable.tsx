@@ -21,7 +21,20 @@ function rowHasFeeWarning(r: EarningsPreviewRow): boolean {
   return r.accountOpeningFee != null && r.accountOpeningFee > 0;
 }
 
-type StatusFilter = "all" | "valid" | "invalid" | "warnings";
+function rowHasDebtSignal(r: EarningsPreviewRow): boolean {
+  if (r.negativeTransferTotal) return true;
+  return r.transferTotal != null && r.transferTotal < 0;
+}
+
+/** Excel-aligned: negatives stay negative in UI (red, bold). */
+function moneyCellClass(n: number | null | undefined): string {
+  const base = "whitespace-nowrap px-2 py-1.5 tabular-nums";
+  if (n == null) return base;
+  if (n < 0) return `${base} font-bold text-red-700`;
+  return base;
+}
+
+type StatusFilter = "all" | "valid" | "invalid" | "warnings" | "debt_tvt";
 
 const scrollShellClass =
   "max-h-[70vh] overflow-auto overscroll-y-contain overscroll-x-none scroll-smooth " +
@@ -117,6 +130,7 @@ export function EarningsImportPreviewVirtualTable({
       if (statusFilter === "valid" && !rowIsValidForCommit(r)) continue;
       if (statusFilter === "invalid" && rowIsValidForCommit(r)) continue;
       if (statusFilter === "warnings" && !rowHasFeeWarning(r)) continue;
+      if (statusFilter === "debt_tvt" && !rowHasDebtSignal(r)) continue;
       if (q) {
         const hay = [
           String(r.rowIndex + 1),
@@ -139,6 +153,7 @@ export function EarningsImportPreviewVirtualTable({
     valid: matchedPreviewCount,
     invalid: Math.max(0, totalRows - matchedPreviewCount),
     warnings: 0,
+    debtRows: 0,
   };
 
   return (
@@ -166,13 +181,15 @@ export function EarningsImportPreviewVirtualTable({
           <p className="mt-1 text-[11px] text-emerald-800/80">of {totalRows.toLocaleString()} total</p>
         </div>
         <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 px-3 py-2 text-sm shadow-sm backdrop-blur-sm">
-          <p className="text-xs font-medium text-slate-600">Errors / warnings</p>
+          <p className="text-xs font-medium text-slate-600">Invalid / fees / debt TVT</p>
           <p className="mt-0.5 font-semibold tabular-nums text-slate-900">
             <span className="text-red-700">{agg.invalid.toLocaleString()}</span>
             <span className="text-slate-400"> · </span>
             <span className="text-amber-800">{agg.warnings.toLocaleString()}</span>
+            <span className="text-slate-400"> · </span>
+            <span className="text-rose-700">{(agg.debtRows ?? 0).toLocaleString()}</span>
           </p>
-          <p className="mt-1 text-[11px] text-slate-500">Invalid · Acct. fee rows</p>
+          <p className="mt-1 text-[11px] text-slate-500">Invalid · Acct. fee · Negative transfer</p>
         </div>
       </div>
 
@@ -206,6 +223,7 @@ export function EarningsImportPreviewVirtualTable({
             <option value="valid">Valid only</option>
             <option value="invalid">Invalid only</option>
             <option value="warnings">Acct. fee rows</option>
+            <option value="debt_tvt">Negative TVT (debt)</option>
           </select>
         </div>
       </div>
@@ -237,7 +255,7 @@ export function EarningsImportPreviewVirtualTable({
         } md:block`}
       >
         <div className={scrollShellClass}>
-          <table className="min-w-[920px] w-full border-collapse text-left text-xs">
+          <table className="min-w-[1020px] w-full border-collapse text-left text-xs">
             <thead className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50/95 text-slate-600 shadow-[0_1px_0_rgb(226_232_240)] backdrop-blur-sm">
               <tr>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">#</th>
@@ -259,26 +277,33 @@ export function EarningsImportPreviewVirtualTable({
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">Id curier / hints</th>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">Match</th>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">Driver</th>
+                <th className="whitespace-nowrap px-2 py-2.5 font-medium" title="Negative TVT = driver debt on commit">
+                  Status
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-800">
               {!complete ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={13} className="px-3 py-12 text-center text-sm text-slate-500">
                     Preparing table…
                   </td>
                 </tr>
               ) : filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={13} className="px-3 py-12 text-center text-sm text-slate-500">
                     No rows match filters.
                   </td>
                 </tr>
               ) : (
                 filteredRows.map((r) => {
                   const ok = rowIsValidForCommit(r);
+                  const debtRow = rowHasDebtSignal(r);
                   return (
-                    <tr key={r.rowIndex} className="hover:bg-slate-50/80">
+                    <tr
+                      key={r.rowIndex}
+                      className={`hover:bg-slate-50/80 ${debtRow ? "bg-rose-50/50 ring-1 ring-inset ring-amber-300/60" : ""}`}
+                    >
                       <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-slate-600">{r.rowIndex + 1}</td>
                       <td className="whitespace-nowrap px-2 py-1.5">
                         {ok ? (
@@ -295,17 +320,24 @@ export function EarningsImportPreviewVirtualTable({
                             Fee
                           </span>
                         )}
+                        {debtRow && (
+                          <span className="ml-1 inline-flex rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-semibold text-rose-900">
+                            Debt TVT
+                          </span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-2 py-1.5">{r.tripDate ?? "—"}</td>
-                      <td className="whitespace-nowrap px-2 py-1.5">{r.gross != null ? formatCurrency(r.gross) : "—"}</td>
-                      <td className="whitespace-nowrap px-2 py-1.5">{r.net != null ? formatCurrency(r.net) : "—"}</td>
-                      <td className="whitespace-nowrap px-2 py-1.5">
+                      <td className={moneyCellClass(r.gross)}>{r.gross != null ? formatCurrency(r.gross) : "—"}</td>
+                      <td className={moneyCellClass(r.net)}>{r.net != null ? formatCurrency(r.net) : "—"}</td>
+                      <td
+                        className={`${moneyCellClass(r.transferTotal)} ${debtRow ? "shadow-[0_0_12px_rgba(251,113,133,0.35)]" : ""}`}
+                      >
                         {r.transferTotal != null ? formatCurrency(r.transferTotal) : "—"}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-1.5">
+                      <td className={moneyCellClass(r.platformFee)}>
                         {r.platformFee != null ? formatCurrency(r.platformFee) : "—"}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-1.5">
+                      <td className={moneyCellClass(r.dailyCash)}>
                         {r.dailyCash != null ? formatCurrency(r.dailyCash) : "—"}
                       </td>
                       <td className="whitespace-nowrap border-l border-amber-100 px-2 py-1.5 italic text-slate-600">
@@ -326,6 +358,15 @@ export function EarningsImportPreviewVirtualTable({
                           <span className="text-slate-400">Unmatched</span>
                         )}
                       </td>
+                      <td className="whitespace-nowrap px-2 py-1.5">
+                        {debtRow ? (
+                          <span className="inline-flex rounded-full bg-gradient-to-r from-red-100 to-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-900 ring-1 ring-orange-300/70">
+                            DEBT
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
@@ -336,8 +377,8 @@ export function EarningsImportPreviewVirtualTable({
       </div>
 
       <p className="text-[11px] text-slate-500 italic">
-        Native scroll (no virtualization). Id curier / TVT / Taxa deschidere cont map to hints, transfer total, and
-        account fee. Commit inserts valid rows only.
+        Native scroll (no virtualization). Rows with negative TVT are highlighted; they become driver debt on commit.
+        Id curier / TVT / Taxa deschidere cont map to hints, transfer total, and account fee.
       </p>
     </div>
   );

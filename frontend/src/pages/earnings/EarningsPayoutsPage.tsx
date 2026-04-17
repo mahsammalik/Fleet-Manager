@@ -150,9 +150,12 @@ export function EarningsPayoutsPage() {
               >
                 <option value="">All</option>
                 <option value="pending">Pending</option>
+                <option value="processing">Processing</option>
                 <option value="approved">Approved</option>
                 <option value="paid">Paid</option>
+                <option value="failed">Failed</option>
                 <option value="hold">Hold</option>
+                <option value="debt">Debt</option>
               </select>
             </div>
             <div>

@@ -13,6 +13,7 @@ import {
 import { syncEarningsVehicleRentals } from "../../api/earnings";
 import { getEarningsImports } from "../../api/earnings";
 import { EarningsImportPreviewVirtualTable } from "../../components/earnings/EarningsImportPreviewVirtualTable";
+import { useCsvValidation } from "../../hooks/useCsvValidation";
 
 const PROVIDER_OPTIONS = [
   { value: "uber", label: "Uber" },
@@ -65,6 +66,8 @@ export function EarningsImportPage() {
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
 
+  const { setClientDebtScan, runClientDebtScan, debtSummaryLine } = useCsvValidation(preview);
+
   useEffect(() => {
     const { start, end } = weeklyDefaultRange();
     setPeriodStart(start);
@@ -105,6 +108,7 @@ export function EarningsImportPage() {
     onSuccess: (res) => {
       setImportSuccess(res.data);
       setPreview(null);
+      setClientDebtScan(null);
       setLocalError(null);
       void queryClient.invalidateQueries({ queryKey: ["earnings"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
@@ -126,6 +130,7 @@ export function EarningsImportPage() {
     mutationFn: (importId: string) => cancelEarningsImport(importId),
     onSuccess: () => {
       setPreview(null);
+      setClientDebtScan(null);
       setLocalError(null);
       void queryClient.invalidateQueries({ queryKey: ["earnings", "imports"] });
     },
@@ -136,7 +141,9 @@ export function EarningsImportPage() {
     (file: File | undefined) => {
       if (!file) return;
       setClientCsvRowCount(null);
+      setClientDebtScan(null);
       if (file.name.toLowerCase().endsWith(".csv")) {
+        void runClientDebtScan(file);
         Papa.parse<Record<string, unknown>>(file, {
           header: true,
           skipEmptyLines: "greedy",
@@ -149,7 +156,7 @@ export function EarningsImportPage() {
       }
       previewMut.mutate(file);
     },
-    [previewMut],
+    [previewMut, setClientDebtScan, runClientDebtScan],
   );
 
   const onDrop = useCallback(
@@ -334,6 +341,16 @@ export function EarningsImportPage() {
                 </span>
               </div>
             </div>
+
+            {debtSummaryLine && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50/95 px-3 py-2.5 text-sm text-rose-950 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-rose-800">Debt detection</p>
+                <p className="mt-1 text-sm font-medium text-rose-900">{debtSummaryLine}</p>
+                <p className="mt-1 text-[11px] text-rose-800/90">
+                  Preview shows the same signs as your file. Negative TVT rows become driver debt on import.
+                </p>
+              </div>
+            )}
 
             {preview.warnings.length > 0 && (
               <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2">

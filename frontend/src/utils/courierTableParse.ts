@@ -46,7 +46,7 @@ export function splitCourierCsvLine(line: string): string[] {
     if (
       i + 1 < parts.length &&
       !/\sRON$/i.test(p) &&
-      /^\d/.test(p) &&
+      /^[-+]?\d/.test(p) &&
       /\s*RON\s*$/i.test(parts[i + 1])
     ) {
       out.push(`${p},${parts[i + 1]}`);
@@ -121,7 +121,7 @@ export function parseRoNumberCell(s: string): number | null {
 }
 
 const COLON_RON = /:\s*(.+?)\s*RON\s*$/i;
-const PLAIN_RON = /^([\d.\s]+(?:,\d+)?)\s*RON\s*$/i;
+const PLAIN_RON = /^([-+]?[\d.\s]+(?:,\d+)?)\s*RON\s*$/i;
 
 /**
  * Extract numeric amount from "Label: 50 RON" or plain "50 RON".
