@@ -239,6 +239,25 @@ CREATE INDEX IF NOT EXISTS idx_driver_payouts_status ON driver_payouts(payment_s
 CREATE INDEX IF NOT EXISTS idx_driver_payouts_period ON driver_payouts(payment_period_start, payment_period_end);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_payouts_org_driver_period ON driver_payouts (organization_id, driver_id, payment_period_start, payment_period_end);
 
+-- Manual debt adjustments (audit)
+CREATE TABLE IF NOT EXISTS payout_adjustments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    payout_id UUID NOT NULL REFERENCES driver_payouts(id) ON DELETE CASCADE,
+    amount NUMERIC(12, 2) NOT NULL,
+    reason TEXT,
+    adjustment_type VARCHAR(32) NOT NULL
+        CHECK (adjustment_type IN ('adjust', 'forgive', 'cash_received', 'carry_forward')),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_payout_adjustments_org_payout
+    ON payout_adjustments (organization_id, payout_id);
+
+CREATE INDEX IF NOT EXISTS idx_payout_adjustments_org_created
+    ON payout_adjustments (organization_id, created_at DESC);
+
 -- Vehicles (company-owned, rented to drivers)
 CREATE TABLE IF NOT EXISTS vehicles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

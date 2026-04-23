@@ -6,7 +6,7 @@ import Papa from "papaparse";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import { useAuthStore } from "../../store/authStore";
-import { getEarningsReports } from "../../api/earnings";
+import { getDebtsAging, getDebtHistory, getDebtsCollectionSummary, getEarningsReports } from "../../api/earnings";
 import type { EarningsReportRow } from "../../api/earnings";
 import { EarningsReportsPreviewTable } from "../../components/earnings/EarningsReportsPreviewTable";
 import { formatCurrency } from "../../utils/currency";
@@ -38,6 +38,9 @@ export function EarningsReportsPage() {
   const [visibleRows, setVisibleRows] = useState<EarningsReportRow[]>([]);
   const previewRef = useRef<HTMLDivElement | null>(null);
 
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
   const query = useQuery({
     queryKey: ["earnings", "reports", from, to, q, status, driverIdFromUrl, minVehicleRental],
     queryFn: () =>
@@ -54,6 +57,32 @@ export function EarningsReportsPage() {
 
   const rows = query.data?.items ?? [];
   const summary = query.data?.summary;
+
+  const agingQuery = useQuery({
+    queryKey: ["earnings", "debts", "aging"],
+    queryFn: () => getDebtsAging().then((r) => r.data),
+    enabled: user?.role === "admin" || user?.role === "accountant",
+  });
+
+  const collectionFrom = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : "";
+  const collectionTo = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : "";
+
+  const collectionQuery = useQuery({
+    queryKey: ["earnings", "debts", "collection", collectionFrom, collectionTo],
+    queryFn: () =>
+      getDebtsCollectionSummary({ from: collectionFrom, to: collectionTo }).then((r) => r.data),
+    enabled:
+      (user?.role === "admin" || user?.role === "accountant") &&
+      Boolean(collectionFrom && collectionTo && collectionFrom <= collectionTo),
+  });
+
+  const debtHistoryQuery = useQuery({
+    queryKey: ["earnings", "debts", "history", driverIdFromUrl],
+    queryFn: () => getDebtHistory(driverIdFromUrl!).then((r) => r.data),
+    enabled:
+      (user?.role === "admin" || user?.role === "accountant") &&
+      Boolean(driverIdFromUrl && uuidRe.test(driverIdFromUrl)),
+  });
 
   async function exportCsv() {
     setCsvBusy(true);
@@ -274,6 +303,103 @@ export function EarningsReportsPage() {
                   {summary ? formatCurrency(summary.totalDebt) : "—"}
                 </p>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-4 space-y-4">
+              <h2 className="text-sm font-semibold text-slate-900">Debt analytics</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                {agingQuery.data &&
+                  (["0_30", "31_60", "61_90", "91_plus"] as const).map((k) => (
+                    <div key={k} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <p className="font-medium text-slate-600">
+                        {k === "0_30"
+                          ? "0–30 d"
+                          : k === "31_60"
+                            ? "31–60 d"
+                            : k === "61_90"
+                              ? "61–90 d"
+                              : "91+ d"}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold tabular-nums text-slate-900">
+                        {formatCurrency(agingQuery.data.buckets[k]?.total ?? 0)}
+                      </p>
+                      <p className="text-slate-500">{agingQuery.data.buckets[k]?.rowCount ?? 0} rows</p>
+                    </div>
+                  ))}
+                {agingQuery.isLoading && <p className="text-slate-500 col-span-4">Loading aging…</p>}
+              </div>
+
+              <div>
+                <h3 className="text-xs font-semibold text-slate-700 mb-2">Collection summary (uses period filters)</h3>
+                {!collectionFrom || !collectionTo ? (
+                  <p className="text-xs text-slate-500">Set valid period from / to above to load collection summary.</p>
+                ) : collectionQuery.isLoading ? (
+                  <p className="text-xs text-slate-500">Loading collection…</p>
+                ) : collectionQuery.data ? (
+                  <div className="space-y-2 text-xs">
+                    <p className="text-slate-600">
+                      Adjustments in range:{" "}
+                      {Object.entries(collectionQuery.data.adjustmentsByType || {})
+                        .map(([t, v]) => `${t}: ${formatCurrency(v)}`)
+                        .join(" · ") || "—"}
+                    </p>
+                    <ul className="max-h-40 overflow-auto rounded border border-slate-200 bg-white divide-y divide-slate-100">
+                      {collectionQuery.data.appliedFromPayouts.length === 0 ? (
+                        <li className="px-2 py-2 text-slate-500">No debt_applied amounts in this window.</li>
+                      ) : (
+                        collectionQuery.data.appliedFromPayouts.map((r) => (
+                          <li key={r.periodEnd} className="flex justify-between px-2 py-1.5 tabular-nums">
+                            <span className="text-slate-600">{r.periodEnd}</span>
+                            <span className="font-medium text-slate-900">{formatCurrency(r.collected)}</span>
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+
+              {driverIdFromUrl && uuidRe.test(driverIdFromUrl) && debtHistoryQuery.data && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-700 mb-2">Driver debt history</h3>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div>
+                      <p className="text-[11px] font-medium text-slate-500 mb-1">Adjustments</p>
+                      <ul className="max-h-48 overflow-auto rounded border border-slate-200 bg-white text-[11px] divide-y">
+                        {debtHistoryQuery.data.adjustments.length === 0 ? (
+                          <li className="px-2 py-2 text-slate-500">No adjustments yet.</li>
+                        ) : (
+                          debtHistoryQuery.data.adjustments.map((a) => (
+                            <li key={a.id} className="px-2 py-1.5 space-y-0.5">
+                              <span className="font-medium text-slate-800">{a.adjustment_type}</span>{" "}
+                              <span className="tabular-nums">{a.amount}</span>
+                              <div className="text-slate-500">
+                                {a.period_start?.slice(0, 10)} – {a.period_end?.slice(0, 10)} ·{" "}
+                                {a.created_at?.slice(0, 19)}
+                              </div>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-medium text-slate-500 mb-1">Payout periods</p>
+                      <ul className="max-h-48 overflow-auto rounded border border-slate-200 bg-white text-[11px] divide-y">
+                        {debtHistoryQuery.data.payouts.map((p) => (
+                          <li key={p.id} className="px-2 py-1.5 flex justify-between gap-2">
+                            <span className="text-slate-600">
+                              {p.payment_period_start?.slice(0, 10)} – {p.payment_period_end?.slice(0, 10)}
+                            </span>
+                            <span className="shrink-0 text-slate-800">
+                              rem {p.remaining_debt_amount} · {p.payment_status}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {query.data?.truncated && (

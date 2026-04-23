@@ -217,3 +217,75 @@ export function getEarningsReportPdfData(params: {
 export function syncEarningsVehicleRentals(body?: { importId?: string; driverId?: string }) {
   return api.post<{ retouchedRecords: number; updatedPayouts: number }>("/earnings/sync-vehicles", body ?? {});
 }
+
+export interface DebtSummaryResponse {
+  totalOutstanding: number;
+  driversWithDebt: number;
+  topDebtors: { driverId: string; name: string; outstanding: number; oldestPeriodEnd: string | null }[];
+}
+
+export function getDebtsSummary() {
+  return api.get<DebtSummaryResponse>("/earnings/debts/summary");
+}
+
+export type DebtAdjustType = "adjust" | "forgive" | "cash_received" | "carry_forward";
+
+export function postPayoutAdjustDebt(
+  payoutId: string,
+  body: { type: DebtAdjustType; amount?: number; note?: string | null },
+) {
+  return api.post<{
+    ok: boolean;
+    payoutId?: string;
+    driverId?: string;
+    type: string;
+    previousRemaining?: number;
+    remainingDebtAmount?: number;
+    paymentStatus?: string;
+  }>(`/earnings/payouts/${encodeURIComponent(payoutId)}/adjust-debt`, body);
+}
+
+export function postDebtsBulkCarryForward(body?: { driverIds?: string[]; from?: string; to?: string }) {
+  return api.post<{ ok: boolean; driversProcessed: number }>("/earnings/debts/bulk-carry-forward", body ?? {});
+}
+
+export function getDebtsAging() {
+  return api.get<{
+    buckets: Record<string, { total: number; rowCount: number }>;
+  }>("/earnings/debts/aging");
+}
+
+export function getDebtsCollectionSummary(params: { from: string; to: string }) {
+  return api.get<{
+    from: string;
+    to: string;
+    appliedFromPayouts: { periodEnd: string; collected: number }[];
+    adjustmentsByType: Record<string, number>;
+  }>("/earnings/debts/collection-summary", { params });
+}
+
+export function getDebtHistory(driverId: string) {
+  return api.get<{
+    adjustments: {
+      id: string;
+      payout_id: string;
+      amount: string;
+      reason: string | null;
+      adjustment_type: string;
+      created_at: string;
+      period_start: string | null;
+      period_end: string | null;
+    }[];
+    payouts: {
+      id: string;
+      payment_period_start: string;
+      payment_period_end: string;
+      raw_net_amount: string | null;
+      debt_amount: string | null;
+      remaining_debt_amount: string | null;
+      debt_applied_amount: string | null;
+      net_driver_payout: string | null;
+      payment_status: string;
+    }[];
+  }>(`/earnings/debts/history/${encodeURIComponent(driverId)}`);
+}
