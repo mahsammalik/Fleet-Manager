@@ -5,6 +5,7 @@ import { DriverMatchIndex } from "./matchDriver";
 import { computeCommissionComponents } from "./commission";
 import { query } from "../../db/pool";
 import type { EarningsStagingPayload } from "./normalizeRow";
+import { applyDebtCarryForward, roundMoney } from "./debtAllocation";
 
 export type EarningsCommitTotals = {
   gross: number;
@@ -73,94 +74,6 @@ function payoutPlatformIdForDriver(drv: DriverMatchRow, platform: EarningsPlatfo
     default:
       return null;
   }
-}
-
-function roundMoney(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-async function applyDebtCarryForward(client: PoolClient, orgId: string, payoutId: string): Promise<void> {
-  const currentRes = await client.query<{
-    id: string;
-    driver_id: string;
-    raw_net_amount: string | null;
-    payment_status: string;
-    payment_period_end: string;
-  }>(
-    `SELECT id::text, driver_id::text, raw_net_amount::text, payment_status, payment_period_end::text
-     FROM driver_payouts
-     WHERE id = $1::uuid AND organization_id = $2::uuid
-     FOR UPDATE`,
-    [payoutId, orgId],
-  );
-  const current = currentRes.rows[0];
-  if (!current) return;
-
-  const outstandingDebtRes = await client.query<{
-    id: string;
-    remaining_debt_amount: string | null;
-  }>(
-    `SELECT id::text, remaining_debt_amount::text
-     FROM driver_payouts
-     WHERE organization_id = $1::uuid
-       AND driver_id = $2::uuid
-       AND id <> $3::uuid
-       AND COALESCE(remaining_debt_amount, 0) > 0
-       AND payment_period_end <= $4::date
-     ORDER BY payment_period_end ASC, id ASC
-     FOR UPDATE`,
-    [orgId, current.driver_id, current.id, current.payment_period_end],
-  );
-
-  const rawNet = roundMoney(Number(current.raw_net_amount ?? "0"));
-  let debtApplied = 0;
-  let debtAmount = 0;
-  let remainingDebtAmount = 0;
-  let payable = 0;
-
-  if (rawNet < 0) {
-    debtAmount = roundMoney(Math.abs(rawNet));
-    remainingDebtAmount = debtAmount;
-  } else {
-    let available = rawNet;
-    for (const debt of outstandingDebtRes.rows) {
-      if (available <= 0) break;
-      const outstanding = roundMoney(Number(debt.remaining_debt_amount ?? "0"));
-      if (outstanding <= 0) continue;
-      const applied = roundMoney(Math.min(available, outstanding));
-      const nextRemaining = roundMoney(Math.max(0, outstanding - applied));
-      await client.query(
-        `UPDATE driver_payouts
-         SET remaining_debt_amount = $1,
-             debt_applied_amount = COALESCE(debt_applied_amount, 0) + $2
-         WHERE id = $3::uuid AND organization_id = $4::uuid`,
-        [nextRemaining, applied, debt.id, orgId],
-      );
-      debtApplied = roundMoney(debtApplied + applied);
-      available = roundMoney(available - applied);
-    }
-    payable = roundMoney(Math.max(0, available));
-  }
-
-  const nextStatus =
-    remainingDebtAmount > 0
-      ? "debt"
-      : current.payment_status === "paid" ||
-          current.payment_status === "approved" ||
-          current.payment_status === "hold"
-        ? current.payment_status
-        : "pending";
-
-  await client.query(
-    `UPDATE driver_payouts
-     SET net_driver_payout = $1,
-         debt_amount = $2,
-         debt_applied_amount = $3,
-         remaining_debt_amount = $4,
-         payment_status = $5
-     WHERE id = $6::uuid AND organization_id = $7::uuid`,
-    [payable, debtAmount, debtApplied, remainingDebtAmount, nextStatus, payoutId, orgId],
-  );
 }
 
 /** Build rows and write earnings_records, driver_payouts rollup, finalize import (same transaction as caller). */

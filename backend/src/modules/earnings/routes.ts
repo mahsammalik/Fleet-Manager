@@ -13,6 +13,11 @@ import { extractDateFromFilename, weekBoundsFromDates } from "./filenameDate";
 import { parseEarningsFile } from "./parseFile";
 import { DriverMatchIndex, type DriverMatchRow } from "./matchDriver";
 import { runEarningsCommitFromStaging } from "./earningsCommit";
+import {
+  propagateDebtAfterManualEdit,
+  recomputeDriverDebtAllocation,
+  roundMoney,
+} from "./debtAllocation";
 import { insertEarningsPreviewStaging } from "./earningsPreviewStage";
 import { stagingPayloadToPreviewRow } from "./previewRowMapper";
 
@@ -1117,6 +1122,397 @@ router.patch("/payouts/bulk", async (req, res) => {
     // eslint-disable-next-line no-console
     console.error("Earnings payouts bulk update error", err);
     return res.status(500).json({ message: "Bulk update failed" });
+  }
+});
+
+const DEBT_ADJUST_TYPES = new Set(["adjust", "forgive", "cash_received", "carry_forward"]);
+
+router.post("/payouts/:id/adjust-debt", async (req, res) => {
+  const orgId = req.user?.orgId;
+  const userId = req.user?.sub;
+  if (!orgId || !userId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const payoutId = String(req.params.id ?? "");
+  if (!UUID_RE.test(payoutId)) return res.status(400).json({ message: "Invalid payout id" });
+
+  const body = req.body as { type?: unknown; amount?: unknown; note?: unknown };
+  const type = typeof body.type === "string" ? body.type.trim() : "";
+  if (!DEBT_ADJUST_TYPES.has(type)) {
+    return res.status(400).json({ message: "type must be adjust, forgive, cash_received, or carry_forward" });
+  }
+  const note = typeof body.note === "string" ? body.note.slice(0, 2000) : null;
+  const amountRaw = body.amount;
+  const amountNum =
+    amountRaw !== undefined && amountRaw !== null && String(amountRaw).trim() !== ""
+      ? Number(amountRaw)
+      : null;
+  if (amountNum !== null && !Number.isFinite(amountNum)) {
+    return res.status(400).json({ message: "amount must be a number" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const pr = await client.query<{
+      id: string;
+      driver_id: string;
+      raw_net_amount: string | null;
+      remaining_debt_amount: string | null;
+      payment_period_end: string;
+      payment_status: string;
+    }>(
+      `SELECT id::text, driver_id::text, raw_net_amount::text, remaining_debt_amount::text,
+              payment_period_end::text, payment_status
+       FROM driver_payouts
+       WHERE id = $1::uuid AND organization_id = $2::uuid
+       FOR UPDATE`,
+      [payoutId, orgId],
+    );
+    const row = pr.rows[0];
+    if (!row) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Payout not found" });
+    }
+
+    const oldRem = roundMoney(Number(row.remaining_debt_amount ?? "0"));
+    const rawNet = roundMoney(Number(row.raw_net_amount ?? "0"));
+
+    if (type === "carry_forward") {
+      await client.query(
+        `INSERT INTO payout_adjustments (organization_id, payout_id, amount, reason, adjustment_type, created_by)
+         VALUES ($1::uuid, $2::uuid, 0, $3, 'carry_forward', $4::uuid)`,
+        [orgId, payoutId, note, userId],
+      );
+      await recomputeDriverDebtAllocation(client, orgId, row.driver_id);
+      await client.query("COMMIT");
+      return res.json({ ok: true, driverId: row.driver_id, type: "carry_forward" });
+    }
+
+    let newRem = oldRem;
+
+    if (type === "forgive") {
+      const take =
+        amountNum != null && amountNum > 0 ? roundMoney(Math.min(oldRem, amountNum)) : oldRem;
+      newRem = roundMoney(Math.max(0, oldRem - take));
+    } else if (type === "cash_received") {
+      if (amountNum == null || amountNum <= 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "amount is required and must be positive for cash_received" });
+      }
+      newRem = roundMoney(Math.max(0, oldRem - roundMoney(amountNum)));
+    } else if (type === "adjust") {
+      if (amountNum == null || !Number.isFinite(amountNum)) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "amount delta is required for adjust" });
+      }
+      newRem = roundMoney(Math.max(0, oldRem + roundMoney(amountNum)));
+    }
+
+    const delta = roundMoney(newRem - oldRem);
+    const nextStatus =
+      newRem > 0
+        ? rawNet < 0
+          ? "debt"
+          : row.payment_status
+        : rawNet < 0
+          ? "hold"
+          : row.payment_status === "paid" || row.payment_status === "approved" || row.payment_status === "hold"
+            ? row.payment_status
+            : "pending";
+
+    await client.query(
+      `INSERT INTO payout_adjustments (organization_id, payout_id, amount, reason, adjustment_type, created_by)
+       VALUES ($1::uuid, $2::uuid, $3, $4, $5::varchar(32), $6::uuid)`,
+      [orgId, payoutId, delta, note, type, userId],
+    );
+
+    await client.query(
+      `UPDATE driver_payouts
+       SET remaining_debt_amount = $1,
+           payment_status = $2
+       WHERE id = $3::uuid AND organization_id = $4::uuid`,
+      [newRem, nextStatus, payoutId, orgId],
+    );
+
+    await propagateDebtAfterManualEdit(client, orgId, row.driver_id, row.payment_period_end.slice(0, 10), row.id);
+
+    await client.query("COMMIT");
+    return res.json({
+      ok: true,
+      payoutId,
+      driverId: row.driver_id,
+      type,
+      previousRemaining: oldRem,
+      remainingDebtAmount: newRem,
+      paymentStatus: nextStatus,
+    });
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line no-console
+    console.error("adjust-debt error", err);
+    return res.status(500).json({ message: "adjust-debt failed" });
+  } finally {
+    client.release();
+  }
+});
+
+router.get("/debts/summary", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  try {
+    const totalRes = await pool.query<{ s: string; c: string }>(
+      `SELECT COALESCE(SUM(remaining_debt_amount), 0)::text AS s,
+              COUNT(DISTINCT driver_id)::text AS c
+       FROM driver_payouts
+       WHERE organization_id = $1::uuid AND COALESCE(remaining_debt_amount, 0) > 0`,
+      [orgId],
+    );
+    const topRes = await pool.query<{
+      driver_id: string;
+      first_name: string;
+      last_name: string;
+      outstanding: string;
+      oldest_period_end: string;
+    }>(
+      `SELECT dp.driver_id::text,
+              d.first_name,
+              d.last_name,
+              COALESCE(SUM(dp.remaining_debt_amount), 0)::text AS outstanding,
+              MIN(dp.payment_period_end)::text AS oldest_period_end
+       FROM driver_payouts dp
+       INNER JOIN drivers d ON d.id = dp.driver_id
+       WHERE dp.organization_id = $1::uuid AND COALESCE(dp.remaining_debt_amount, 0) > 0
+       GROUP BY dp.driver_id, d.first_name, d.last_name
+       ORDER BY COALESCE(SUM(dp.remaining_debt_amount), 0) DESC
+       LIMIT 15`,
+      [orgId],
+    );
+
+    return res.json({
+      totalOutstanding: parseFloat(totalRes.rows[0]?.s ?? "0"),
+      driversWithDebt: parseInt(totalRes.rows[0]?.c ?? "0", 10),
+      topDebtors: topRes.rows.map((r) => ({
+        driverId: r.driver_id,
+        name: `${r.first_name} ${r.last_name}`.trim(),
+        outstanding: parseFloat(r.outstanding),
+        oldestPeriodEnd: r.oldest_period_end?.slice(0, 10) ?? null,
+      })),
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("debts summary error", err);
+    return res.status(500).json({ message: "Failed to load debt summary" });
+  }
+});
+
+router.post("/debts/bulk-carry-forward", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const body = req.body as { driverIds?: unknown; from?: unknown; to?: unknown };
+  const from =
+    typeof body.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.from) ? body.from : null;
+  const to = typeof body.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.to) ? body.to : null;
+  const driverIds = Array.isArray(body.driverIds)
+    ? body.driverIds.filter((x): x is string => typeof x === "string" && UUID_RE.test(x))
+    : null;
+
+  try {
+    const params: unknown[] = [orgId];
+    let p = 2;
+    const where: string[] = ["dp.organization_id = $1::uuid"];
+    if (from) {
+      where.push(`dp.payment_period_end >= $${p++}::date`);
+      params.push(from);
+    }
+    if (to) {
+      where.push(`dp.payment_period_start <= $${p++}::date`);
+      params.push(to);
+    }
+    if (driverIds?.length) {
+      where.push(`dp.driver_id = ANY($${p++}::uuid[])`);
+      params.push(driverIds);
+    }
+    const drvRes = await pool.query<{ driver_id: string }>(
+      `SELECT DISTINCT dp.driver_id::text AS driver_id
+       FROM driver_payouts dp
+       WHERE ${where.join(" AND ")}`,
+      params,
+    );
+    const drivers = drvRes.rows.map((r) => r.driver_id);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const driverId of drivers) {
+        await recomputeDriverDebtAllocation(client, orgId, driverId);
+      }
+      await client.query("COMMIT");
+      return res.json({ ok: true, driversProcessed: drivers.length });
+    } catch (e) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("bulk-carry-forward error", err);
+    return res.status(500).json({ message: "bulk-carry-forward failed" });
+  }
+});
+
+router.get("/debts/aging", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  try {
+    const { rows } = await pool.query<{ bucket: string; total: string; row_count: string }>(
+      `SELECT
+         CASE
+           WHEN (CURRENT_DATE - payment_period_end) <= 30 THEN '0_30'
+           WHEN (CURRENT_DATE - payment_period_end) <= 60 THEN '31_60'
+           WHEN (CURRENT_DATE - payment_period_end) <= 90 THEN '61_90'
+           ELSE '91_plus'
+         END AS bucket,
+         COALESCE(SUM(remaining_debt_amount), 0)::text AS total,
+         COUNT(*)::text AS row_count
+       FROM driver_payouts
+       WHERE organization_id = $1::uuid AND COALESCE(remaining_debt_amount, 0) > 0
+       GROUP BY 1
+       ORDER BY 1`,
+      [orgId],
+    );
+    const map = Object.fromEntries(rows.map((r) => [r.bucket, { total: parseFloat(r.total), rowCount: parseInt(r.row_count, 10) }]));
+    return res.json({
+      buckets: {
+        "0_30": map["0_30"] ?? { total: 0, rowCount: 0 },
+        "31_60": map["31_60"] ?? { total: 0, rowCount: 0 },
+        "61_90": map["61_90"] ?? { total: 0, rowCount: 0 },
+        "91_plus": map["91_plus"] ?? { total: 0, rowCount: 0 },
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("debts aging error", err);
+    return res.status(500).json({ message: "Failed to load debt aging" });
+  }
+});
+
+router.get("/debts/collection-summary", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const from =
+    typeof req.query.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : null;
+  const to = typeof req.query.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : null;
+  if (!from || !to) {
+    return res.status(400).json({ message: "from and to query params are required (YYYY-MM-DD)" });
+  }
+
+  try {
+    const appliedRes = await pool.query<{ period_end: string; collected: string }>(
+      `SELECT payment_period_end::text AS period_end,
+              COALESCE(SUM(debt_applied_amount), 0)::text AS collected
+       FROM driver_payouts
+       WHERE organization_id = $1::uuid
+         AND payment_period_end >= $2::date AND payment_period_start <= $3::date
+         AND COALESCE(debt_applied_amount, 0) > 0
+       GROUP BY payment_period_end
+       ORDER BY payment_period_end`,
+      [orgId, from, to],
+    );
+
+    const adjRes = await pool.query<{ adjustment_type: string; total: string }>(
+      `SELECT adjustment_type, COALESCE(SUM(ABS(amount)), 0)::text AS total
+       FROM payout_adjustments
+       WHERE organization_id = $1::uuid
+         AND created_at >= $2::timestamptz AND created_at < ($3::date + INTERVAL '1 day')::timestamptz
+       GROUP BY adjustment_type`,
+      [orgId, `${from}T00:00:00Z`, to],
+    );
+
+    return res.json({
+      from,
+      to,
+      appliedFromPayouts: appliedRes.rows.map((r) => ({
+        periodEnd: r.period_end.slice(0, 10),
+        collected: parseFloat(r.collected),
+      })),
+      adjustmentsByType: Object.fromEntries(adjRes.rows.map((r) => [r.adjustment_type, parseFloat(r.total)])),
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("collection summary error", err);
+    return res.status(500).json({ message: "Failed to load collection summary" });
+  }
+});
+
+router.get("/debts/history/:driverId", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const driverId = String(req.params.driverId ?? "");
+  if (!UUID_RE.test(driverId)) return res.status(400).json({ message: "Invalid driver id" });
+
+  try {
+    const adj = await pool.query<{
+      id: string;
+      payout_id: string;
+      amount: string;
+      reason: string | null;
+      adjustment_type: string;
+      created_at: string;
+      period_start: string | null;
+      period_end: string | null;
+    }>(
+      `SELECT pa.id::text, pa.payout_id::text, pa.amount::text, pa.reason, pa.adjustment_type, pa.created_at::text,
+              dp.payment_period_start::text AS period_start, dp.payment_period_end::text AS period_end
+       FROM payout_adjustments pa
+       INNER JOIN driver_payouts dp ON dp.id = pa.payout_id AND dp.organization_id = pa.organization_id
+       WHERE pa.organization_id = $1::uuid AND dp.driver_id = $2::uuid
+       ORDER BY pa.created_at DESC
+       LIMIT 500`,
+      [orgId, driverId],
+    );
+
+    const snaps = await pool.query<{
+      id: string;
+      payment_period_start: string;
+      payment_period_end: string;
+      raw_net_amount: string | null;
+      debt_amount: string | null;
+      remaining_debt_amount: string | null;
+      debt_applied_amount: string | null;
+      net_driver_payout: string | null;
+      payment_status: string;
+    }>(
+      `SELECT id::text, payment_period_start::text, payment_period_end::text,
+              raw_net_amount::text, debt_amount::text, remaining_debt_amount::text,
+              debt_applied_amount::text, net_driver_payout::text, payment_status
+       FROM driver_payouts
+       WHERE organization_id = $1::uuid AND driver_id = $2::uuid
+       ORDER BY payment_period_end DESC, id DESC`,
+      [orgId, driverId],
+    );
+
+    return res.json({
+      adjustments: adj.rows,
+      payouts: snaps.rows,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("debt history error", err);
+    return res.status(500).json({ message: "Failed to load debt history" });
   }
 });
 

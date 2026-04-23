@@ -3,8 +3,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { useAuthStore } from "../../store/authStore";
-import { bulkUpdatePayouts, getEarningsPayouts, getPayoutsWithProrationDetails } from "../../api/earnings";
+import {
+  bulkUpdatePayouts,
+  getDebtsSummary,
+  getEarningsPayouts,
+  getPayoutsWithProrationDetails,
+  postDebtsBulkCarryForward,
+} from "../../api/earnings";
+import type { PayoutListItem } from "../../api/earnings";
 import { DriverPayoutTable } from "../../components/earnings/DriverPayoutTable";
+import { DebtActionsModal } from "../../components/earnings/DebtActionsModal";
 
 function errMessage(e: unknown): string {
   if (axios.isAxiosError(e)) {
@@ -31,6 +39,9 @@ export function EarningsPayoutsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [payingRowId, setPayingRowId] = useState<string | null>(null);
+  const [debtModalRow, setDebtModalRow] = useState<PayoutListItem | null>(null);
+  const [debtActionMsg, setDebtActionMsg] = useState<string | null>(null);
+  const [bulkDebtBusy, setBulkDebtBusy] = useState(false);
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
@@ -77,6 +88,12 @@ export function EarningsPayoutsPage() {
     () => new Map((detailsQuery.data?.items ?? []).map((d) => [d.payout_id, d])),
     [detailsQuery.data?.items],
   );
+
+  const debtSummaryQuery = useQuery({
+    queryKey: ["earnings", "debts", "summary"],
+    queryFn: () => getDebtsSummary().then((r) => r.data),
+    enabled: user?.role === "admin" || user?.role === "accountant",
+  });
 
   const bulkMut = useMutation({
     mutationFn: (ids: string[]) =>
@@ -133,6 +150,89 @@ export function EarningsPayoutsPage() {
             >
               Clear driver filter
             </button>
+          </div>
+        )}
+
+        {debtSummaryQuery.data && (
+          <div className="rounded-2xl border border-rose-200/80 bg-rose-50/60 p-4 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-rose-900">Debt overview</h2>
+                <p className="mt-1 text-2xl font-bold tabular-nums text-rose-950">
+                  {debtSummaryQuery.data.totalOutstanding.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{" "}
+                  RON outstanding
+                </p>
+                <p className="text-xs text-rose-800 mt-1">
+                  {debtSummaryQuery.data.driversWithDebt} driver
+                  {debtSummaryQuery.data.driversWithDebt === 1 ? "" : "s"} with open debt
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={bulkDebtBusy}
+                  onClick={async () => {
+                    setBulkDebtBusy(true);
+                    setDebtActionMsg(null);
+                    try {
+                      const r = await postDebtsBulkCarryForward({
+                        from: from || undefined,
+                        to: to || undefined,
+                      });
+                      setDebtActionMsg(`Recomputed debt allocation for ${r.data.driversProcessed} driver(s).`);
+                      void queryClient.invalidateQueries({ queryKey: ["earnings"] });
+                    } catch (e) {
+                      setDebtActionMsg(errMessage(e));
+                    } finally {
+                      setBulkDebtBusy(false);
+                    }
+                  }}
+                  className="rounded-lg border border-rose-400 bg-white px-3 py-2 text-xs font-medium text-rose-900 hover:bg-rose-100/80 disabled:opacity-50"
+                >
+                  {bulkDebtBusy ? "Working…" : "Bulk carry-forward (filtered period)"}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg bg-rose-700 px-3 py-2 text-xs font-medium text-white hover:bg-rose-800"
+                  onClick={() => {
+                    setPage(1);
+                    setStatus("debt");
+                  }}
+                >
+                  View debt payouts
+                </button>
+              </div>
+            </div>
+            {debtSummaryQuery.data.topDebtors.length > 0 && (
+              <ul className="mt-3 grid gap-1 text-xs text-rose-950 sm:grid-cols-2">
+                {debtSummaryQuery.data.topDebtors.map((d) => (
+                  <li key={d.driverId} className="flex justify-between gap-2 rounded-lg bg-white/70 px-2 py-1.5">
+                    <button
+                      type="button"
+                      className="text-left font-medium text-rose-900 hover:underline"
+                      onClick={() => {
+                        const next = new URLSearchParams(searchParams);
+                        next.set("driverId", d.driverId);
+                        setSearchParams(next);
+                        setPage(1);
+                      }}
+                    >
+                      {d.name}
+                    </button>
+                    <span className="tabular-nums font-semibold">
+                      {d.outstanding.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{" "}
+                      RON
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {debtActionMsg && (
+              <p className="mt-2 text-xs text-rose-900 border-t border-rose-200/60 pt-2">{debtActionMsg}</p>
+            )}
           </div>
         )}
 
@@ -222,6 +322,17 @@ export function EarningsPayoutsPage() {
           onPaySelected={async (ids) => {
             setPayingRowId(null);
             await bulkMut.mutateAsync(ids);
+          }}
+          onOpenDebtActions={(row) => setDebtModalRow(row)}
+        />
+
+        <DebtActionsModal
+          row={debtModalRow}
+          open={debtModalRow != null}
+          onClose={() => setDebtModalRow(null)}
+          onSuccess={() => {
+            void queryClient.invalidateQueries({ queryKey: ["earnings"] });
+            void debtSummaryQuery.refetch();
           }}
         />
 

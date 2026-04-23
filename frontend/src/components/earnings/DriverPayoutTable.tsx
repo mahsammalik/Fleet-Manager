@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { PayoutListItem, PayoutProrationDetail } from "../../api/earnings";
 import { usePayoutSearch } from "../../hooks/usePayoutSearch";
@@ -17,6 +17,7 @@ type DriverPayoutTableProps = {
   onReplaceSelection: (ids: string[]) => void;
   onPayNow: (id: string) => void | Promise<void>;
   onPaySelected: (ids: string[]) => void | Promise<void>;
+  onOpenDebtActions?: (row: PayoutListItem) => void;
 };
 
 const BADGE_BY_STATUS: Record<string, string> = {
@@ -81,6 +82,7 @@ export function DriverPayoutTable({
   onReplaceSelection,
   onPayNow,
   onPaySelected,
+  onOpenDebtActions,
 }: DriverPayoutTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [payConfirm, setPayConfirm] = useState<
@@ -101,12 +103,20 @@ export function DriverPayoutTable({
   } = usePayoutSearch(rows);
 
   const hasQuery = searchQuery.trim().length > 0 || statusFilter.length > 0;
+  const isPayableRow = useCallback((r: PayoutListItem) => {
+    const debtLike = r.payment_status === "debt" || toNum(r.raw_net_amount) < 0;
+    return r.payment_status === "pending" && !debtLike;
+  }, []);
+
   const pendingIds = useMemo(
-    () => filteredRows.filter((r) => r.payment_status === "pending").map((r) => r.id),
-    [filteredRows],
+    () => filteredRows.filter((r) => isPayableRow(r)).map((r) => r.id),
+    [filteredRows, isPayableRow],
   );
   const selectedPendingIds = pendingIds.filter((id) => selectedIds.has(id));
-  const pendingTotal = filteredRows.reduce((sum, r) => (r.payment_status === "pending" ? sum + toNum(r.net_driver_payout) : sum), 0);
+  const pendingTotal = filteredRows.reduce(
+    (sum, r) => (isPayableRow(r) ? sum + toNum(r.net_driver_payout) : sum),
+    0,
+  );
   const paidCount = filteredRows.filter((r) => r.payment_status === "paid").length;
   const platformIdMatchCount = filteredRows.filter((r) => includesQuery(r.platform_id, debouncedQuery)).length;
 
@@ -263,17 +273,29 @@ export function DriverPayoutTable({
                 {filteredRows.map((row) => {
                   const detail = detailsByPayoutId.get(row.id);
                   const isExpanded = expanded.has(row.id);
-                  const isDebtRow =
-                    row.payment_status === "debt" ||
-                    toNum(row.remaining_debt_amount) > 0 ||
-                    toNum(row.debt_amount) > 0 ||
-                    toNum(row.raw_net_amount) < 0 ||
-                    toNum(row.net_driver_payout) < 0;
-                  const isPending = row.payment_status === "pending" && !isDebtRow;
+                  const isDebtStyle = row.payment_status === "debt" || toNum(row.raw_net_amount) < 0;
+                  const debtBadgeAmount = Math.max(toNum(row.remaining_debt_amount), toNum(row.debt_amount));
+                  const showDebtBadge =
+                    isDebtStyle && (debtBadgeAmount > 0 || row.payment_status === "debt");
+                  const showPreviousDebtApplied =
+                    toNum(row.debt_applied_amount) > 0 &&
+                    !isDebtStyle &&
+                    (row.payment_status === "pending" ||
+                      row.payment_status === "paid" ||
+                      row.payment_status === "approved");
+                  const isPending = isPayableRow(row);
                   const isPayingRow = payingRowId === row.id;
+                  const canDebtActions =
+                    onOpenDebtActions &&
+                    (row.payment_status === "debt" ||
+                      toNum(row.raw_net_amount) < 0 ||
+                      toNum(row.remaining_debt_amount) > 0 ||
+                      toNum(row.debt_amount) > 0);
                   return (
                     <Fragment key={row.id}>
-                      <tr className="align-top text-slate-800">
+                      <tr
+                        className={`align-top text-slate-800 ${isDebtStyle ? "bg-red-50 border-l-4 border-red-400" : ""}`}
+                      >
                         <td className="px-3 py-3">
                           <div className="font-medium">
                             <HighlightText text={`${row.first_name} ${row.last_name}`} query={debouncedQuery} />
@@ -295,9 +317,17 @@ export function DriverPayoutTable({
                           <div className="text-lg font-bold tabular-nums text-slate-900">
                             {formatCurrency(toNum(row.net_driver_payout))}
                           </div>
-                          {isDebtRow && (
+                          {showDebtBadge && (
                             <div className="mt-1 inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-800">
-                              DEBT {formatCurrency(-Math.max(toNum(row.remaining_debt_amount), toNum(row.debt_amount)))}
+                              DEBT {formatCurrency(-debtBadgeAmount)}
+                            </div>
+                          )}
+                          {isDebtStyle && !showDebtBadge && row.payment_status === "hold" && (
+                            <div className="mt-1 text-[11px] font-medium text-slate-600">Debt cleared (hold)</div>
+                          )}
+                          {showPreviousDebtApplied && (
+                            <div className="mt-1 text-[11px] font-medium text-amber-800">
+                              Previous debt applied: {formatCurrency(toNum(row.debt_applied_amount))}
                             </div>
                           )}
                         </td>
@@ -328,14 +358,26 @@ export function DriverPayoutTable({
                               disabled={!isPending || isPaying}
                               aria-label={`Select payout for ${row.first_name}`}
                             />
-                            <button
-                              type="button"
-                              disabled={!isPending || isPaying}
-                              onClick={() => setPayConfirm({ kind: "one", payoutId: row.id })}
-                              className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
-                            >
-                              {isPayingRow ? "Paying…" : "Pay Now"}
-                            </button>
+                            {isPending && (
+                              <button
+                                type="button"
+                                disabled={isPaying}
+                                onClick={() => setPayConfirm({ kind: "one", payoutId: row.id })}
+                                className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                              >
+                                {isPayingRow ? "Paying…" : "Pay Now"}
+                              </button>
+                            )}
+                            {canDebtActions && (
+                              <button
+                                type="button"
+                                disabled={isPaying}
+                                onClick={() => onOpenDebtActions?.(row)}
+                                className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+                              >
+                                Adjust debt
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() =>
@@ -414,16 +456,33 @@ export function DriverPayoutTable({
             {filteredRows.map((row) => {
               const detail = detailsByPayoutId.get(row.id);
               const isExpanded = expanded.has(row.id);
-              const isDebtRow =
-                row.payment_status === "debt" ||
-                toNum(row.remaining_debt_amount) > 0 ||
-                toNum(row.debt_amount) > 0 ||
-                toNum(row.raw_net_amount) < 0 ||
-                toNum(row.net_driver_payout) < 0;
-              const isPending = row.payment_status === "pending" && !isDebtRow;
+              const isDebtStyle = row.payment_status === "debt" || toNum(row.raw_net_amount) < 0;
+              const debtBadgeAmount = Math.max(toNum(row.remaining_debt_amount), toNum(row.debt_amount));
+              const showDebtBadge =
+                isDebtStyle && (debtBadgeAmount > 0 || row.payment_status === "debt");
+              const showPreviousDebtApplied =
+                toNum(row.debt_applied_amount) > 0 &&
+                !isDebtStyle &&
+                (row.payment_status === "pending" ||
+                  row.payment_status === "paid" ||
+                  row.payment_status === "approved");
+              const isPending = isPayableRow(row);
               const isPayingRow = payingRowId === row.id;
+              const canDebtActions =
+                onOpenDebtActions &&
+                (row.payment_status === "debt" ||
+                  toNum(row.raw_net_amount) < 0 ||
+                  toNum(row.remaining_debt_amount) > 0 ||
+                  toNum(row.debt_amount) > 0);
               return (
-                <div key={row.id} className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm">
+                <div
+                  key={row.id}
+                  className={`rounded-2xl border p-4 shadow-sm ${
+                    isDebtStyle
+                      ? "border-red-200/90 bg-red-50 border-l-[4px] border-l-red-400"
+                      : "border-slate-200/80 bg-white/80"
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-slate-900">
@@ -460,9 +519,17 @@ export function DriverPayoutTable({
                       <HighlightText text={row.payment_status} query={debouncedQuery} />
                     </span>
                   </div>
-                  {isDebtRow && (
-                    <p className="mt-1 text-xs font-semibold text-red-700">
-                      DEBT {formatCurrency(-Math.max(toNum(row.remaining_debt_amount), toNum(row.debt_amount)))}
+                  {showDebtBadge && (
+                    <p className="mt-1 text-xs font-semibold text-red-800">
+                      DEBT {formatCurrency(-debtBadgeAmount)}
+                    </p>
+                  )}
+                  {isDebtStyle && !showDebtBadge && row.payment_status === "hold" && (
+                    <p className="mt-1 text-xs font-medium text-slate-600">Debt cleared (hold)</p>
+                  )}
+                  {showPreviousDebtApplied && (
+                    <p className="mt-1 text-xs font-medium text-amber-800">
+                      Previous debt applied: {formatCurrency(toNum(row.debt_applied_amount))}
                     </p>
                   )}
                   <p className="mt-2 text-xs text-slate-600">
@@ -475,14 +542,26 @@ export function DriverPayoutTable({
                     </span>
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={!isPending || isPaying}
-                      onClick={() => setPayConfirm({ kind: "one", payoutId: row.id })}
-                      className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
-                    >
-                      {isPayingRow ? "Paying…" : "Pay Now"}
-                    </button>
+                    {isPending && (
+                      <button
+                        type="button"
+                        disabled={isPaying}
+                        onClick={() => setPayConfirm({ kind: "one", payoutId: row.id })}
+                        className="rounded-lg bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                      >
+                        {isPayingRow ? "Paying…" : "Pay Now"}
+                      </button>
+                    )}
+                    {canDebtActions && (
+                      <button
+                        type="button"
+                        disabled={isPaying}
+                        onClick={() => onOpenDebtActions?.(row)}
+                        className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+                      >
+                        Adjust debt
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() =>
