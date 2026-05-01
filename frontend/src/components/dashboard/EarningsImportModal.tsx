@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useAuthStore } from "../../store/authStore";
 import {
   previewEarningsImport,
   commitEarningsImport,
   cancelEarningsImport,
+  fetchOrgImportSettings,
   type EarningsPreviewResponse,
 } from "../../api/earningsImport";
 import { EarningsImportPreviewVirtualTable } from "../earnings/EarningsImportPreviewVirtualTable";
@@ -99,8 +100,18 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
     }
   }, [preview?.importId]);
 
+  const orgImportSettingsQuery = useQuery({
+    queryKey: ["earnings", "org-import-settings"],
+    queryFn: () => fetchOrgImportSettings().then((r) => r.data),
+    enabled: open && canImport,
+  });
+
   const previewMut = useMutation({
-    mutationFn: (file: File) => previewEarningsImport(file),
+    mutationFn: (file: File) =>
+      previewEarningsImport(file, {
+        glovoCommissionBaseType:
+          orgImportSettingsQuery.data?.glovoCommissionBaseType ?? "net_income",
+      }),
     onSuccess: (res) => {
       setLocalError(null);
       setPreview(res.data);

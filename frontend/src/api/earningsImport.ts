@@ -6,6 +6,7 @@ export interface EarningsPreviewRow {
   tripDate: string | null;
   gross: number | null;
   net: number | null;
+  tips: number | null;
   /** Total Venituri de transferat (TVT) when column mapped */
   transferTotal: number | null;
   platformFee: number | null;
@@ -46,6 +47,8 @@ export interface EarningsPreviewResponse {
   matchRate: number;
   weekStart: string;
   weekEnd: string;
+  /** Effective commission base type stored on this preview import. */
+  glovoCommissionBaseType?: string;
   warnings: string[];
   /** Empty after server change; use GET preview-rows for data. */
   previewRows: EarningsPreviewRow[];
@@ -76,10 +79,29 @@ export interface EarningsCommitResponse {
   };
 }
 
-export function previewEarningsImport(file: File) {
+export type PreviewEarningsImportOptions = {
+  glovoCommissionBaseType?: string;
+};
+
+export function previewEarningsImport(file: File, opts?: PreviewEarningsImportOptions) {
   const fd = new FormData();
   fd.append("file", file);
+  if (opts?.glovoCommissionBaseType) {
+    fd.append("glovoCommissionBaseType", opts.glovoCommissionBaseType);
+  }
   return api.post<EarningsPreviewResponse>("/earnings/import/preview", fd);
+}
+
+export type OrgImportSettings = {
+  glovoCommissionBaseType: string;
+};
+
+export function fetchOrgImportSettings() {
+  return api.get<OrgImportSettings>("/earnings/import/org-settings");
+}
+
+export function patchOrgImportSettings(body: OrgImportSettings) {
+  return api.patch<OrgImportSettings>("/earnings/import/org-settings", body);
 }
 
 export function fetchEarningsPreviewRows(importId: string, offset: number, limit: number) {

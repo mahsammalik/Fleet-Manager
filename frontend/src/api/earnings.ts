@@ -64,6 +64,14 @@ export interface PayoutListItem {
   payment_date: string | null;
   total_gross_earnings: string | null;
   company_commission: string | null;
+  /** Glovo ladder: venituri + tips (period sum). */
+  gross_income: string | null;
+  /** Glovo ladder: gross_income − taxa (period sum). */
+  net_income: string | null;
+  commission_base: string | null;
+  /** Fleet rate as decimal fraction (e.g. 0.2 for 20%). */
+  commission_rate: string | null;
+  commission_base_type: string | null;
   first_name: string;
   last_name: string;
   phone: string | null;

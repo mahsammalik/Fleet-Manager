@@ -20,6 +20,8 @@ import {
 } from "./debtAllocation";
 import { insertEarningsPreviewStaging } from "./earningsPreviewStage";
 import { stagingPayloadToPreviewRow } from "./previewRowMapper";
+import { parseCommissionBaseType, type CommissionBaseType } from "./calculatePayout";
+import { readOrgGlovoCommissionBase, writeOrgGlovoCommissionBase } from "./orgImportSettings";
 
 const router = Router();
 
@@ -27,6 +29,41 @@ router.use(authenticateJWT);
 router.use(requireRole("admin", "accountant"));
 
 export type { EarningsStagingPayload } from "./normalizeRow";
+
+router.get("/import/org-settings", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  try {
+    const glovoCommissionBaseType = await readOrgGlovoCommissionBase(orgId);
+    return res.json({ glovoCommissionBaseType });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("org-settings get error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+router.patch("/import/org-settings", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ message: "Only admins can change import settings" });
+  }
+  const raw = (req.body as { glovoCommissionBaseType?: unknown })?.glovoCommissionBaseType;
+  const glovoCommissionBaseType = parseCommissionBaseType(raw);
+  try {
+    await writeOrgGlovoCommissionBase(orgId, glovoCommissionBaseType);
+    return res.json({ glovoCommissionBaseType });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("org-settings patch error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
 
 function collectWarnings(
   colMap: Map<number, import("./normalizeRow").CanonicalField>,
@@ -141,6 +178,15 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
     const { weekStart, weekEnd } = weekBoundsFromDates(dates);
 
     const index = await loadMatchIndex(orgId);
+    let effectiveGlovoBase: CommissionBaseType = "net_income";
+    if (platform === "glovo") {
+      const defaultGlovoBase = await readOrgGlovoCommissionBase(orgId);
+      const bodyRaw = (req.body as { glovoCommissionBaseType?: unknown })?.glovoCommissionBaseType;
+      effectiveGlovoBase =
+        bodyRaw !== undefined && bodyRaw !== null && String(bodyRaw).trim() !== ""
+          ? parseCommissionBaseType(bodyRaw)
+          : defaultGlovoBase;
+    }
 
     let validForCommit = 0;
     let invalidRows = 0;
@@ -179,6 +225,7 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
         headerCount: table.headers.length,
         rowCount: table.rows.length,
         normalizedRows,
+        glovoCommissionBaseType: platform === "glovo" ? effectiveGlovoBase : undefined,
       });
       await client.query("COMMIT");
     } catch (e) {
@@ -202,6 +249,7 @@ router.post("/import/preview", earningsUpload.single("file"), async (req, res) =
       matchRate,
       weekStart,
       weekEnd,
+      glovoCommissionBaseType: platform === "glovo" ? effectiveGlovoBase : undefined,
       warnings,
       previewRows: [],
       aggregates: {
@@ -892,12 +940,14 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
   const total = parseInt(countRes.rows[0]?.c ?? "0", 10);
 
   const listParams = [...params, pageSize, offset];
-  const listRes = await pool.query(
+    const listRes = await pool.query(
     `SELECT dp.id::text, dp.driver_id::text, dp.platform_id,
             dp.payment_period_start::text, dp.payment_period_end::text,
             dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
             dp.raw_net_amount::text, dp.debt_amount::text, dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.total_gross_earnings::text, dp.company_commission::text,
+            dp.gross_income::text, dp.net_income::text, dp.commission_base::text,
+            dp.commission_rate::text, dp.commission_base_type,
             dp.vehicle_rental_fee::text,
             d.first_name, d.last_name, d.phone,
             CONCAT(d.first_name, ' ', d.last_name) AS driver_name,

@@ -41,6 +41,29 @@ function toNum(value: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Native tooltip on net payout when Glovo transparency columns exist. */
+function payoutGlovoBreakdownTitle(row: PayoutListItem): string | undefined {
+  const gi = row.gross_income;
+  const ni = row.net_income;
+  if ((gi == null || gi === "") && (ni == null || ni === "")) return undefined;
+  const rNum = toNum(row.commission_rate);
+  const pctLabel =
+    rNum > 0 && rNum <= 1
+      ? `${(rNum * 100).toFixed(2).replace(/\.?0+$/, "")}%`
+      : rNum > 0
+        ? `${rNum}%`
+        : "—";
+  const baseLabel = row.commission_base_type ?? "net_income";
+  return [
+    `Gross income (Venituri + Tips): ${formatCurrency(toNum(gi))}`,
+    `Net income (− Taxa): ${formatCurrency(toNum(ni))}`,
+    `Commission base (ladder net, matches Net income): ${formatCurrency(toNum(row.commission_base))}`,
+    `Commission (fleet): ${formatCurrency(toNum(row.company_commission))} (${pctLabel} on ${baseLabel}; cash leg uses same rate)`,
+    `Raw period roll-up: ${formatCurrency(toNum(row.raw_net_amount))}`,
+    `Net payable: ${formatCurrency(toNum(row.net_driver_payout))}`,
+  ].join("\n");
+}
+
 function includesQuery(value: string | null | undefined, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return false;
@@ -313,7 +336,7 @@ export function DriverPayoutTable({
                         <td className="px-3 py-3 text-xs text-slate-700">
                           <HighlightText text={periodLabel(row)} query={debouncedQuery} />
                         </td>
-                        <td className="px-3 py-3 text-right">
+                        <td className="px-3 py-3 text-right" title={payoutGlovoBreakdownTitle(row)}>
                           <div className="text-lg font-bold tabular-nums text-slate-900">
                             {formatCurrency(toNum(row.net_driver_payout))}
                           </div>
@@ -407,6 +430,20 @@ export function DriverPayoutTable({
                             <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                               <div>
                                 <p className="font-semibold text-slate-800">Breakdown</p>
+                                {payoutGlovoBreakdownTitle(row) && (
+                                  <>
+                                    <p className="text-sky-800 font-medium">Glovo ladder (period)</p>
+                                    <p>Gross income (Venituri + Tips): {formatCurrency(toNum(row.gross_income))}</p>
+                                    <p>Net income (− Taxa): {formatCurrency(toNum(row.net_income))}</p>
+                                    <p>Commission base (ladder net): {formatCurrency(toNum(row.commission_base))}</p>
+                                    <p className="text-slate-500">
+                                      Base type: {row.commission_base_type ?? "—"} · Fleet rate:{" "}
+                                      {row.commission_rate != null && row.commission_rate !== ""
+                                        ? `${(toNum(row.commission_rate) * 100).toFixed(2)}%`
+                                        : "—"}
+                                    </p>
+                                  </>
+                                )}
                                 <p>Gross revenue: {formatCurrency(toNum(row.total_gross_earnings))}</p>
                                 <p>Company commission: {formatCurrency(toNum(row.company_commission))}</p>
                                 <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>
@@ -507,7 +544,7 @@ export function DriverPayoutTable({
                       aria-label={`Select payout for ${row.first_name}`}
                     />
                   </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
+                  <div className="mt-3 flex items-center justify-between gap-2" title={payoutGlovoBreakdownTitle(row)}>
                     <p className="text-xl font-bold tabular-nums text-slate-900">
                       {formatCurrency(toNum(row.net_driver_payout))}
                     </p>
@@ -586,6 +623,14 @@ export function DriverPayoutTable({
                   {isExpanded && (
                     <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
                       <p className="font-semibold text-slate-800">Breakdown</p>
+                      {payoutGlovoBreakdownTitle(row) && (
+                        <>
+                          <p className="text-sky-800 font-medium">Glovo ladder</p>
+                          <p>Gross income: {formatCurrency(toNum(row.gross_income))}</p>
+                          <p>Net income: {formatCurrency(toNum(row.net_income))}</p>
+                          <p>Commission base (ladder net): {formatCurrency(toNum(row.commission_base))}</p>
+                        </>
+                      )}
                       <p>Gross: {formatCurrency(toNum(row.total_gross_earnings))}</p>
                       <p>Commission: {formatCurrency(toNum(row.company_commission))}</p>
                       <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>

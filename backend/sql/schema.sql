@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS earnings_records (
     cash_commission DECIMAL(10, 2),
     has_cash_commission BOOLEAN GENERATED ALWAYS AS (COALESCE(cash_commission, 0) < 0) STORED,
     company_commission DECIMAL(10, 2),
+    tips DECIMAL(10, 2),
     driver_payout DECIMAL(10, 2),
     driver_payout_after_cash DECIMAL(10, 2)
       GENERATED ALWAYS AS (
@@ -204,6 +205,11 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     total_net_earnings DECIMAL(12, 2),
     total_daily_cash DECIMAL(12, 2) DEFAULT 0,
     company_commission DECIMAL(10, 2),
+    gross_income NUMERIC(12, 6),
+    net_income NUMERIC(12, 6),
+    commission_base NUMERIC(12, 6),
+    commission_rate NUMERIC(6, 5),
+    commission_base_type VARCHAR(50) DEFAULT 'net_income',
     bonuses DECIMAL(10, 2) DEFAULT 0,
     penalties DECIMAL(10, 2) DEFAULT 0,
     adjustments DECIMAL(10, 2) DEFAULT 0,

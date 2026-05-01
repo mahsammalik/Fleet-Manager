@@ -9,7 +9,8 @@ export type CanonicalField =
   | "transfer_total"
   | "daily_cash"
   | "account_opening_fee"
-  | "trips";
+  | "trips"
+  | "tips";
 
 export interface RowHints {
   courierId?: string;
@@ -27,6 +28,8 @@ export interface NormalizedAmounts {
   /** Magnitude only; CSV may show negative (e.g. -71.44). */
   accountOpeningFee: number | null;
   tripCount: number | null;
+  /** Tips / bacșiș; gross remains venituri when both columns exist. */
+  tips?: number | null;
 }
 
 export interface NormalizedEarningsRow {
@@ -116,6 +119,7 @@ export function rowCellsToNormalized(
     dailyCash: null,
     accountOpeningFee: null,
     tripCount: null,
+    tips: null,
   };
   const rawSample: Record<string, string> = {};
 
@@ -162,6 +166,9 @@ export function rowCellsToNormalized(
       case "trips":
         amounts.tripCount = parseRoNumber(raw);
         if (amounts.tripCount !== null) amounts.tripCount = Math.round(amounts.tripCount);
+        break;
+      case "tips":
+        amounts.tips = parseRoNumber(raw);
         break;
       default:
         break;

@@ -7,6 +7,8 @@ import {
   previewEarningsImport,
   commitEarningsImport,
   cancelEarningsImport,
+  fetchOrgImportSettings,
+  patchOrgImportSettings,
   type EarningsPreviewResponse,
   type EarningsCommitResponse,
 } from "../../api/earningsImport";
@@ -23,6 +25,15 @@ const PROVIDER_OPTIONS = [
   { value: "glovo", label: "Glovo Courier" },
   { value: "bolt_courier", label: "Bolt Courier" },
   { value: "wolt_courier", label: "Wolt Courier" },
+] as const;
+
+const GLOVO_COMMISSION_BASE_OPTIONS = [
+  { value: "net_income", label: "Net income (legacy / TVT chain)" },
+  { value: "gross_income", label: "Gross income (Venituri + Tips)" },
+  { value: "net_income_no_tips", label: "Net without tips" },
+  { value: "gross_income_no_tips", label: "Gross without tips" },
+  { value: "net_income_no_bonuses", label: "Net (no bonuses column yet)" },
+  { value: "gross_income_no_bonuses", label: "Gross (no bonuses column yet)" },
 ] as const;
 
 function providerLabel(value: string): string {
@@ -68,6 +79,7 @@ export function EarningsImportPage() {
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [commitImportOpen, setCommitImportOpen] = useState(false);
+  const [glovoCommissionBaseType, setGlovoCommissionBaseType] = useState<string>("net_income");
 
   const { setClientDebtScan, runClientDebtScan, debtSummaryLine } = useCsvValidation(preview);
 
@@ -96,12 +108,38 @@ export function EarningsImportPage() {
     enabled: user?.role === "admin" || user?.role === "accountant",
   });
 
+  const orgImportSettingsQuery = useQuery({
+    queryKey: ["earnings", "org-import-settings"],
+    queryFn: () => fetchOrgImportSettings().then((r) => r.data),
+    enabled: user?.role === "admin" || user?.role === "accountant",
+  });
+
+  useEffect(() => {
+    const v = orgImportSettingsQuery.data?.glovoCommissionBaseType;
+    if (v) setGlovoCommissionBaseType(v);
+  }, [orgImportSettingsQuery.data?.glovoCommissionBaseType]);
+
+  const patchOrgImportSettingsMut = useMutation({
+    mutationFn: (glovoCommissionBaseType: string) =>
+      patchOrgImportSettings({ glovoCommissionBaseType }).then((r) => r.data),
+    onSuccess: (data) => {
+      setGlovoCommissionBaseType(data.glovoCommissionBaseType);
+      setLocalError(null);
+      void queryClient.invalidateQueries({ queryKey: ["earnings", "org-import-settings"] });
+    },
+    onError: (e) => setLocalError(errMessage(e)),
+  });
+
   const previewMut = useMutation({
-    mutationFn: (file: File) => previewEarningsImport(file),
+    mutationFn: (input: { file: File; glovoCommissionBaseType?: string }) =>
+      previewEarningsImport(input.file, { glovoCommissionBaseType: input.glovoCommissionBaseType }),
     onSuccess: (res) => {
       setLocalError(null);
       setImportSuccess(null);
       setPreview(res.data);
+      if (res.data.glovoCommissionBaseType) {
+        setGlovoCommissionBaseType(res.data.glovoCommissionBaseType);
+      }
       setClientCsvRowCount(null);
     },
     onError: (e) => {
@@ -166,9 +204,13 @@ export function EarningsImportPage() {
           error: () => setClientCsvRowCount(null),
         });
       }
-      previewMut.mutate(file);
+      previewMut.mutate({
+        file,
+        glovoCommissionBaseType:
+          selectedPlatform === "glovo" ? glovoCommissionBaseType : undefined,
+      });
     },
-    [previewMut, setClientDebtScan, runClientDebtScan],
+    [previewMut, setClientDebtScan, runClientDebtScan, selectedPlatform, glovoCommissionBaseType],
   );
 
   const onDrop = useCallback(
@@ -222,6 +264,40 @@ export function EarningsImportPage() {
               Matched rows use the full vehicle rental contract amount (total_rent_amount), not a daily split. Payouts sum each
               rental once per period.
             </p>
+          </div>
+        )}
+
+        {!preview && selectedPlatform === "glovo" && (
+          <div className="rounded-xl border border-amber-200/80 bg-amber-50/50 px-4 py-3 text-sm text-amber-950">
+            <p className="font-medium text-amber-900">Glovo: fleet commission base</p>
+            <p className="text-xs text-amber-900/80 mt-1">
+              Applies to new imports only. Snapshot is stored on each preview import.
+            </p>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label htmlFor="glovo-commission-base" className="sr-only">
+                Commission base type
+              </label>
+              <select
+                id="glovo-commission-base"
+                className="rounded-lg border border-amber-300/80 bg-white px-3 py-2 text-sm text-slate-900 min-h-[40px] max-w-md disabled:opacity-60"
+                value={glovoCommissionBaseType}
+                disabled={busy || patchOrgImportSettingsMut.isPending || user?.role !== "admin"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setGlovoCommissionBaseType(v);
+                  if (user?.role === "admin") patchOrgImportSettingsMut.mutate(v);
+                }}
+              >
+                {GLOVO_COMMISSION_BASE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              {user?.role !== "admin" && (
+                <span className="text-xs text-amber-900/90">Only admins can change this setting.</span>
+              )}
+            </div>
           </div>
         )}
 
@@ -282,6 +358,16 @@ export function EarningsImportPage() {
                 {confidencePct != null ? ` (${confidencePct}%)` : ""}
               </span>
             </div>
+            {preview.platform === "glovo" && (
+              <p className="text-xs text-slate-600">
+                Commission base snapshot for this file:{" "}
+                <span className="font-mono text-slate-800">
+                  {preview.glovoCommissionBaseType ?? "net_income"}
+                </span>
+                . Cancel this preview, adjust the Glovo commission base on the import page, then upload again to use a
+                different base.
+              </p>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
