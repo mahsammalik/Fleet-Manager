@@ -16,8 +16,20 @@ export async function insertEarningsPreviewStaging(
     headerCount: number;
     rowCount: number;
     normalizedRows: NormalizedEarningsRow[];
+    /** Snapshot for commit: Glovo transfer commission base policy. */
+    glovoCommissionBaseType?: string;
   },
 ): Promise<string> {
+  const detectionMeta = {
+    detectedPlatform: params.platform,
+    detectionConfidence: params.detectionConfidence,
+    filenameDate: params.filenameDate,
+    headerCount: params.headerCount,
+    rowCount: params.rowCount,
+    ...(params.platform === "glovo" && params.glovoCommissionBaseType
+      ? { glovoCommissionBaseType: params.glovoCommissionBaseType }
+      : {}),
+  };
   const ins = await client.query<{ id: string }>(
     `INSERT INTO earnings_imports (
           organization_id, file_name, import_date, week_start, week_end, platform,
@@ -31,13 +43,7 @@ export async function insertEarningsPreviewStaging(
       params.weekEnd,
       params.platform,
       params.userId,
-      JSON.stringify({
-        detectedPlatform: params.platform,
-        detectionConfidence: params.detectionConfidence,
-        filenameDate: params.filenameDate,
-        headerCount: params.headerCount,
-        rowCount: params.rowCount,
-      }),
+      JSON.stringify(detectionMeta),
     ],
   );
   const importId = ins.rows[0]?.id;

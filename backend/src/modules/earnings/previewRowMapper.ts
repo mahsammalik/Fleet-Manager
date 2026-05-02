@@ -8,6 +8,7 @@ export type EarningsPreviewRowDto = {
   tripDate: string | null;
   gross: number | null;
   net: number | null;
+  tips: number | null;
   transferTotal: number | null;
   platformFee: number | null;
   dailyCash: number | null;
@@ -37,6 +38,7 @@ export function stagingPayloadToPreviewRow(
     tripDate: p.tripDateIso,
     gross: p.amounts.gross,
     net: p.amounts.net,
+    tips: p.amounts.tips ?? null,
     transferTotal: p.amounts.transferTotal,
     platformFee: p.amounts.platformFee,
     dailyCash: p.amounts.dailyCash,

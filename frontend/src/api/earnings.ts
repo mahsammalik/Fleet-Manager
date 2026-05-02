@@ -16,10 +16,10 @@ export interface PayoutIntegrityRow {
   platform: string;
   net_earnings: string | null;
   driver_payout: string | null;
-  cash_commission: string | null;
+  company_commission: string | null;
+  commission_base?: string | null;
   total_transfer_earnings: string | null;
   account_opening_fee: string | null;
-  transfer_commission: string | null;
   vehicle_rental_fee: string | null;
   vehicle_rental_id: string | null;
   expected_payout: string | null;
@@ -63,7 +63,22 @@ export interface PayoutListItem {
   payment_status: string;
   payment_date: string | null;
   total_gross_earnings: string | null;
+  /** Period sum of base earnings (income), excluding tips. */
+  income: string | null;
+  /** Period sum of tips. */
+  tips: string | null;
+  total_platform_fees: string | null;
+  total_daily_cash: string | null;
+  /** Fleet commission (single: percent / fixed / hybrid of period net income). */
   company_commission: string | null;
+  /** Glovo ladder: income + tips (period sum). */
+  gross_income: string | null;
+  /** Glovo ladder: gross_income − taxa (period sum). */
+  net_income: string | null;
+  commission_base: string | null;
+  /** Fleet rate as decimal fraction (e.g. 0.2 for 20%). */
+  commission_rate: string | null;
+  commission_base_type: string | null;
   first_name: string;
   last_name: string;
   phone: string | null;
@@ -86,6 +101,17 @@ export interface EarningsReportRow {
   period_start_label: string;
   period_end_label: string;
   total_gross_earnings: string | null;
+  income: string | null;
+  tips: string | null;
+  total_platform_fees: string | null;
+  total_daily_cash: string | null;
+  gross_income: string | null;
+  net_income: string | null;
+  /** Fleet commission (single). */
+  company_commission: string | null;
+  commission_base: string | null;
+  commission_rate: string | null;
+  commission_base_type: string | null;
   vehicle_rental_fee: string | null;
   net_driver_payout: string | null;
   raw_net_amount: string | null;
@@ -105,6 +131,10 @@ export interface EarningsReportSummary {
   totalVehicleRental: number;
   totalRevenue: number;
   totalDebt: number;
+  /** Sum of period company_commission (same as total fleet commission for the report). */
+  totalCommissionLegs: number;
+  /** Sum of company_commission charged. */
+  totalCompanyCommission: number;
 }
 
 export interface EarningsReportsResponse {
@@ -112,6 +142,14 @@ export interface EarningsReportsResponse {
   summary: EarningsReportSummary;
   truncated: boolean;
   limit: number;
+}
+
+export interface CommissionByBaseTypeRow {
+  commission_base_type: string;
+  payoutCount: number;
+  totalCompanyCommission: number;
+  totalCommissionBase: number;
+  avgCommissionRate: number;
 }
 
 export interface PayoutProrationDetail {
@@ -160,6 +198,17 @@ export function getEarningsReports(params: {
   limit?: number;
 }) {
   return api.get<EarningsReportsResponse>("/earnings/reports", { params });
+}
+
+export function getCommissionByBaseTypeReport(params: {
+  from?: string;
+  to?: string;
+  q?: string;
+  status?: string;
+  driverId?: string;
+  minVehicleRental?: number;
+}) {
+  return api.get<{ items: CommissionByBaseTypeRow[] }>("/earnings/reports/commission-by-base-type", { params });
 }
 
 export function getPayoutsWithProrationDetails(params: {

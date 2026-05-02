@@ -138,6 +138,7 @@ export function EarningsImportPreviewVirtualTable({
           r.hints?.courierId ?? "",
           r.hints?.phone ?? "",
           r.hints?.plate ?? "",
+          r.tips != null ? String(r.tips) : "",
           MATCH_LABEL[r.matchMethod] ?? r.matchMethod,
         ]
           .join(" ")
@@ -255,13 +256,16 @@ export function EarningsImportPreviewVirtualTable({
         } md:block`}
       >
         <div className={scrollShellClass}>
-          <table className="min-w-[1020px] w-full border-collapse text-left text-xs">
+          <table className="min-w-[1080px] w-full border-collapse text-left text-xs">
             <thead className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50/95 text-slate-600 shadow-[0_1px_0_rgb(226_232_240)] backdrop-blur-sm">
               <tr>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">#</th>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">Import</th>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">Date</th>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">Gross</th>
+                <th className="whitespace-nowrap px-2 py-2.5 font-medium" title="Tips / bacșiș">
+                  Tips
+                </th>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium">Net</th>
                 <th className="whitespace-nowrap px-2 py-2.5 font-medium" title="Total Venituri de transferat">
                   TVT
@@ -285,13 +289,13 @@ export function EarningsImportPreviewVirtualTable({
             <tbody className="divide-y divide-slate-100 text-slate-800">
               {!complete ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={14} className="px-3 py-12 text-center text-sm text-slate-500">
                     Preparing table…
                   </td>
                 </tr>
               ) : filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={14} className="px-3 py-12 text-center text-sm text-slate-500">
                     No rows match filters.
                   </td>
                 </tr>
@@ -328,6 +332,7 @@ export function EarningsImportPreviewVirtualTable({
                       </td>
                       <td className="whitespace-nowrap px-2 py-1.5">{r.tripDate ?? "—"}</td>
                       <td className={moneyCellClass(r.gross)}>{r.gross != null ? formatCurrency(r.gross) : "—"}</td>
+                      <td className={moneyCellClass(r.tips)}>{r.tips != null ? formatCurrency(r.tips) : "—"}</td>
                       <td className={moneyCellClass(r.net)}>{r.net != null ? formatCurrency(r.net) : "—"}</td>
                       <td
                         className={`${moneyCellClass(r.transferTotal)} ${debtRow ? "shadow-[0_0_12px_rgba(251,113,133,0.35)]" : ""}`}

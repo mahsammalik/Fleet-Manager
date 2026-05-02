@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { EarningsReportRow } from "../../api/earnings";
 import { formatCurrency } from "../../utils/currency";
+import { commissionBaseTypeLabel } from "../../utils/commissionBaseLabels";
 
-type SortKey = "driver" | "period" | "revenue" | "rental" | "payout" | "debt" | "status";
+type SortKey = "driver" | "period" | "revenue" | "commission" | "rental" | "payout" | "debt" | "status";
 
 type SortState = {
   key: SortKey;
@@ -85,6 +86,8 @@ export function EarningsReportsPreviewTable({
         return a.payment_period_start.localeCompare(b.payment_period_start) * dir;
       if (sort.key === "revenue")
         return (asNumber(a.total_gross_earnings) - asNumber(b.total_gross_earnings)) * dir;
+      if (sort.key === "commission")
+        return (asNumber(a.company_commission) - asNumber(b.company_commission)) * dir;
       if (sort.key === "rental")
         return (asNumber(a.vehicle_rental_fee) - asNumber(b.vehicle_rental_fee)) * dir;
       if (sort.key === "debt")
@@ -143,7 +146,7 @@ export function EarningsReportsPreviewTable({
 
       <div className={`${mobileOpen ? "block" : "hidden"} overflow-x-auto rounded-xl border border-slate-200/80 bg-white/50 md:block`}>
         <div className={scrollShellClass}>
-          <table className="min-w-[1120px] w-full border-collapse text-left text-xs">
+          <table className="min-w-[1580px] w-full border-collapse text-left text-xs">
             <thead className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50/95 text-slate-600 shadow-[0_1px_0_rgb(226_232_240)]">
               <tr>
                 <th className="px-3 py-2.5">
@@ -156,10 +159,30 @@ export function EarningsReportsPreviewTable({
                     Period{sortLabel("period")}
                   </button>
                 </th>
+                <th className="px-3 py-2.5 text-right">Income</th>
+                <th className="px-3 py-2.5 text-right">Tips</th>
                 <th className="px-3 py-2.5 text-right">
                   <button type="button" className="font-medium hover:text-slate-900" onClick={() => toggleSort("revenue")}>
-                    Total Revenue{sortLabel("revenue")}
+                    Total gross{sortLabel("revenue")}
                   </button>
+                </th>
+                <th className="px-3 py-2.5 text-right">
+                  <button
+                    type="button"
+                    className="font-medium hover:text-slate-900"
+                    onClick={() => toggleSort("commission")}
+                  >
+                    Commission{sortLabel("commission")}
+                  </button>
+                </th>
+                <th className="px-3 py-2.5 text-right" title="Sum of commission base for the period">
+                  Comm. base
+                </th>
+                <th className="px-3 py-2.5 text-right" title="Driver nominal rate (decimal fraction)">
+                  Rate
+                </th>
+                <th className="px-3 py-2.5 text-left max-w-[140px]" title="Org import setting snapshot">
+                  Base type
                 </th>
                 <th className="px-3 py-2.5 text-right">
                   <button type="button" className="font-medium hover:text-slate-900" onClick={() => toggleSort("rental")}>
@@ -186,13 +209,13 @@ export function EarningsReportsPreviewTable({
             <tbody className="divide-y divide-slate-100 text-slate-800">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={12} className="px-3 py-10 text-center text-sm text-slate-500">
                     Loading live preview...
                   </td>
                 </tr>
               ) : visibleRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={12} className="px-3 py-10 text-center text-sm text-slate-500">
                     No rows match the current filters.
                   </td>
                 </tr>
@@ -206,8 +229,26 @@ export function EarningsReportsPreviewTable({
                     <td className="px-3 py-2 whitespace-nowrap">
                       {row.period_start_label} - {row.period_end_label}
                     </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(asNumber(row.income))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(asNumber(row.tips))}</td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {formatCurrency(asNumber(row.total_gross_earnings))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatCurrency(asNumber(row.company_commission))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                      {formatCurrency(asNumber(row.commission_base))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                      {(() => {
+                        const r = asNumber(row.commission_rate);
+                        if (!(r > 0)) return "—";
+                        return r <= 1 ? `${(r * 100).toFixed(2).replace(/\.?0+$/, "")}%` : `${r}%`;
+                      })()}
+                    </td>
+                    <td className="px-3 py-2 text-[11px] leading-snug text-slate-600 max-w-[140px]">
+                      {commissionBaseTypeLabel(row.commission_base_type)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {formatCurrency(asNumber(row.vehicle_rental_fee))}

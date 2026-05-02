@@ -2,10 +2,10 @@ import type { PoolClient } from "pg";
 import type { EarningsPlatform } from "./detectPlatform";
 import type { DriverMatchRow } from "./matchDriver";
 import { DriverMatchIndex } from "./matchDriver";
-import { computeCommissionComponents } from "./commission";
 import { query } from "../../db/pool";
 import type { EarningsStagingPayload } from "./normalizeRow";
 import { applyDebtCarryForward, roundMoney } from "./debtAllocation";
+import { calculatePayout, parseCommissionBaseType } from "./calculatePayout";
 
 export type EarningsCommitTotals = {
   gross: number;
@@ -52,11 +52,14 @@ type InsertRow = {
   total_transfer_earnings: number | null;
   daily_cash: number | null;
   account_opening_fee: number | null;
-  transfer_commission: number;
-  cash_commission: number;
   company_commission: number;
+  tips: number | null;
   driver_payout: number;
   commission_type: string;
+  glovo_gross_income: number;
+  glovo_net_income: number;
+  commission_base: number;
+  commission_rate_frac: number;
 };
 
 function payoutPlatformIdForDriver(drv: DriverMatchRow, platform: EarningsPlatform): string | null {
@@ -89,6 +92,17 @@ export async function runEarningsCommitFromStaging(
     `SELECT row_index, payload FROM earnings_import_staging WHERE import_id = $1 ORDER BY row_index`,
     [importId],
   );
+
+  const impMetaRes = await client.query<{ detection_meta: unknown }>(
+    `SELECT detection_meta FROM earnings_imports WHERE id = $1::uuid AND organization_id = $2::uuid`,
+    [importId, orgId],
+  );
+  const commissionBaseType =
+    platformEff === "glovo"
+      ? parseCommissionBaseType(
+          (impMetaRes.rows[0]?.detection_meta as Record<string, unknown> | null)?.glovoCommissionBaseType,
+        )
+      : "net_income";
 
   const index = await loadMatchIndex(orgId);
   const driversRes = await client.query<DriverMatchRow & { id: string }>(
@@ -137,16 +151,18 @@ export async function runEarningsCommitFromStaging(
     if (g === null && n !== null && f !== null) g = n + f;
     if (n === null && g !== null && f !== null) n = g - f;
     if (f === null && g !== null && n !== null) f = g - n;
-    const transferAmount = transferTotalRaw ?? n ?? g ?? 0;
-    const cashAmount = p.amounts.dailyCash ?? 0;
-    const comm = computeCommissionComponents(drv, transferAmount, cashAmount);
 
-    // Transfer commission stays signed (negative TVT → negative transfer_commission).
-    // Cash commission is stored signed (negative daily cash → negative cash_commission) but the driver
-    // deduction follows Excel/Glovo: subtract |cash_commission| so the fleet % applies to cash volume.
-    const rawNetPayout = roundMoney(
-      transferAmount - comm.transfer_commission - Math.abs(comm.cash_commission),
-    );
+    const tipsVal = p.amounts.tips ?? null;
+    const calc = calculatePayout({
+      income: g,
+      tips: tipsVal,
+      taxa_aplicatie: f,
+      plata_zilnica_cash: p.amounts.dailyCash,
+      transferTotal: transferTotalRaw,
+      resolvedPlatformNet: n,
+      driver: drv,
+      commission_base_type: commissionBaseType,
+    });
 
     const accountOpeningRaw = p.amounts.accountOpeningFee ?? null;
 
@@ -157,15 +173,18 @@ export async function runEarningsCommitFromStaging(
       trip_count: p.amounts.tripCount,
       gross: g,
       fee: f,
-      net: rawNetPayout,
+      net: calc.driver_payout,
       total_transfer_earnings: transferTotalRaw,
       daily_cash: p.amounts.dailyCash ?? null,
       account_opening_fee: accountOpeningRaw,
-      transfer_commission: comm.transfer_commission,
-      cash_commission: comm.cash_commission,
-      company_commission: comm.company_commission,
-      driver_payout: rawNetPayout,
-      commission_type: comm.commission_type,
+      company_commission: calc.company_commission,
+      tips: tipsVal,
+      driver_payout: calc.driver_payout,
+      commission_type: calc.commission_type,
+      glovo_gross_income: calc.gross_income,
+      glovo_net_income: calc.net_income,
+      commission_base: roundMoney(calc.commission_base),
+      commission_rate_frac: calc.commission_rate,
     });
   }
 
@@ -191,9 +210,9 @@ export async function runEarningsCommitFromStaging(
         r.total_transfer_earnings,
         r.daily_cash,
         r.account_opening_fee,
-        r.transfer_commission,
-        r.cash_commission,
         r.company_commission,
+        r.commission_base,
+        r.tips,
         r.driver_payout,
         r.commission_type,
       );
@@ -202,8 +221,8 @@ export async function runEarningsCommitFromStaging(
       `INSERT INTO earnings_records (
           import_id, driver_id, platform, trip_date, trip_count,
           gross_earnings, platform_fee, net_earnings,
-          total_transfer_earnings, daily_cash, account_opening_fee, transfer_commission, cash_commission,
-          company_commission, driver_payout, commission_type
+          total_transfer_earnings, daily_cash, account_opening_fee,
+          company_commission, commission_base, tips, driver_payout, commission_type
         ) VALUES ${ph.join(",")}`,
       values,
     );
@@ -255,7 +274,8 @@ export async function runEarningsCommitFromStaging(
   const byDriver = new Map<
     string,
     {
-      gross: number;
+      income: number;
+      tips: number;
       fee: number;
       net: number;
       comm: number;
@@ -263,11 +283,16 @@ export async function runEarningsCommitFromStaging(
       dailyCash: number;
       vehicleRentalFee: number;
       platformId: string | null;
+      glovoGross: number;
+      glovoNet: number;
+      commissionBase: number;
+      commissionRateFrac: number;
     }
   >();
   for (const r of toInsert) {
     const cur = byDriver.get(r.driver_id) ?? {
-      gross: 0,
+      income: 0,
+      tips: 0,
       fee: 0,
       net: 0,
       comm: 0,
@@ -275,14 +300,23 @@ export async function runEarningsCommitFromStaging(
       dailyCash: 0,
       vehicleRentalFee: 0,
       platformId: null,
+      glovoGross: 0,
+      glovoNet: 0,
+      commissionBase: 0,
+      commissionRateFrac: r.commission_rate_frac,
     };
-    cur.gross += r.gross ?? 0;
+    cur.income += r.gross ?? 0;
+    cur.tips += r.tips ?? 0;
     cur.fee += r.fee ?? 0;
     cur.net += r.net ?? 0;
     cur.comm += r.company_commission;
     cur.payout += r.driver_payout;
     cur.dailyCash += r.daily_cash ?? 0;
     cur.platformId ??= r.platform_id ?? null;
+    cur.glovoGross += r.glovo_gross_income;
+    cur.glovoNet += r.glovo_net_income;
+    cur.commissionBase += r.commission_base;
+    cur.commissionRateFrac = r.commission_rate_frac;
     byDriver.set(r.driver_id, cur);
   }
   for (const [driverId, agg] of byDriver) {
@@ -293,21 +327,29 @@ export async function runEarningsCommitFromStaging(
     const upsertRes = await client.query<{ id: string }>(
       `INSERT INTO driver_payouts (
           organization_id, driver_id, platform_id, payment_period_start, payment_period_end,
-          total_gross_earnings, total_platform_fees, total_net_earnings,
+          income, tips, total_platform_fees, total_net_earnings,
           total_daily_cash,
           company_commission, raw_net_amount, net_driver_payout, debt_amount, debt_applied_amount, remaining_debt_amount,
-          vehicle_rental_fee, payment_status
-        ) VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, 0, 0, 0, 0, $12, 'pending')
+          vehicle_rental_fee, payment_status,
+          gross_income, net_income, commission_base, commission_rate, commission_base_type
+        ) VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, 0, 0, 0, 0, $13, 'pending',
+          $14, $15, $16, $17, $18)
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
         DO UPDATE SET
           platform_id = COALESCE(driver_payouts.platform_id, EXCLUDED.platform_id),
-          total_gross_earnings = COALESCE(driver_payouts.total_gross_earnings, 0) + EXCLUDED.total_gross_earnings,
+          income = COALESCE(driver_payouts.income, 0) + EXCLUDED.income,
+          tips = COALESCE(driver_payouts.tips, 0) + EXCLUDED.tips,
           total_platform_fees = COALESCE(driver_payouts.total_platform_fees, 0) + EXCLUDED.total_platform_fees,
           total_net_earnings = COALESCE(driver_payouts.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
           total_daily_cash = COALESCE(driver_payouts.total_daily_cash, 0) + EXCLUDED.total_daily_cash,
           company_commission = COALESCE(driver_payouts.company_commission, 0) + EXCLUDED.company_commission,
           raw_net_amount = COALESCE(driver_payouts.raw_net_amount, 0) + EXCLUDED.raw_net_amount,
-          vehicle_rental_fee = COALESCE(driver_payouts.vehicle_rental_fee, 0) + EXCLUDED.vehicle_rental_fee
+          vehicle_rental_fee = COALESCE(driver_payouts.vehicle_rental_fee, 0) + EXCLUDED.vehicle_rental_fee,
+          gross_income = COALESCE(driver_payouts.gross_income, 0) + EXCLUDED.gross_income,
+          net_income = COALESCE(driver_payouts.net_income, 0) + EXCLUDED.net_income,
+          commission_base = COALESCE(driver_payouts.commission_base, 0) + EXCLUDED.commission_base,
+          commission_rate = EXCLUDED.commission_rate,
+          commission_base_type = EXCLUDED.commission_base_type
         RETURNING id::text`,
       [
         orgId,
@@ -315,13 +357,19 @@ export async function runEarningsCommitFromStaging(
         agg.platformId,
         weekStartEff,
         weekEndEff,
-        agg.gross,
+        agg.income,
+        agg.tips,
         agg.fee,
         agg.net,
         agg.dailyCash,
         agg.comm,
         agg.payout,
         agg.vehicleRentalFee,
+        roundMoney(agg.glovoGross),
+        roundMoney(agg.glovoNet),
+        roundMoney(agg.commissionBase),
+        agg.commissionRateFrac,
+        commissionBaseType,
       ],
     );
     const payoutId = upsertRes.rows[0]?.id;

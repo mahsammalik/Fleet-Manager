@@ -40,16 +40,16 @@ export function detectionConfidence(
 
 /**
  * Glovo Romania courier weekly export: exact normalized column names (Tier A).
- * Uses equality for `venituri` so total-transfer columns do not count as the Venituri column.
+ * Uses equality for the header `venituri` so total-transfer columns do not count as the Venituri column.
  * Total column may be spelled `transferat` (legacy) or `transfera` (V2 export).
  */
 export function isGlovoRomaniaCourierExport(norm: string[]): boolean {
   const idCurier = norm.some((h) => h === "id curier");
-  const venituri = norm.some((h) => h === "venituri");
+  const hasVenituriHeader = norm.some((h) => h === "venituri");
   const totalTransfer = norm.some(
     (h) => h === "total venituri de transferat" || h === "total venituri de transfera",
   );
-  return idCurier && venituri && totalTransfer;
+  return idCurier && hasVenituriHeader && totalTransfer;
 }
 
 function scoreFilename(name: string): Partial<Record<EarningsPlatform, number>> {

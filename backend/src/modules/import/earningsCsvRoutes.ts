@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticateJWT, requireRole } from "../../middleware/auth";
 import { pool } from "../../db/pool";
+import { readOrgGlovoCommissionBase } from "../earnings/orgImportSettings";
 import { earningsUpload } from "../../config/multer";
 import { parseEarningsFile } from "../earnings/parseFile";
 import { buildColumnMap } from "../earnings/romanHeaderMap";
@@ -57,6 +58,8 @@ router.post("/earnings-csv", earningsUpload.single("file"), async (req, res) => 
       }),
     );
 
+    const glovoCommissionBaseType =
+      platformEff === "glovo" ? await readOrgGlovoCommissionBase(orgId) : undefined;
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -72,6 +75,7 @@ router.post("/earnings-csv", earningsUpload.single("file"), async (req, res) => 
         headerCount: table.headers.length,
         rowCount: table.rows.length,
         normalizedRows,
+        glovoCommissionBaseType,
       });
       const commitResult = await runEarningsCommitFromStaging(client, orgId, importId, platformEff, weekStart, weekEnd);
       await client.query("COMMIT");

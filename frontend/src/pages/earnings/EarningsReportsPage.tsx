@@ -6,10 +6,17 @@ import Papa from "papaparse";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import { useAuthStore } from "../../store/authStore";
-import { getDebtsAging, getDebtHistory, getDebtsCollectionSummary, getEarningsReports } from "../../api/earnings";
+import {
+  getCommissionByBaseTypeReport,
+  getDebtsAging,
+  getDebtHistory,
+  getDebtsCollectionSummary,
+  getEarningsReports,
+} from "../../api/earnings";
 import type { EarningsReportRow } from "../../api/earnings";
 import { EarningsReportsPreviewTable } from "../../components/earnings/EarningsReportsPreviewTable";
 import { formatCurrency } from "../../utils/currency";
+import { commissionBaseTypeLabel } from "../../utils/commissionBaseLabels";
 
 function errMessage(e: unknown): string {
   if (axios.isAxiosError(e)) {
@@ -41,17 +48,24 @@ export function EarningsReportsPage() {
   const uuidRe =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+  const reportFilters = {
+    from: from || undefined,
+    to: to || undefined,
+    q: q.trim() || undefined,
+    status: status || undefined,
+    driverId: driverIdFromUrl,
+    minVehicleRental: minVehicleRental.trim() ? Number(minVehicleRental) : undefined,
+  };
+
   const query = useQuery({
     queryKey: ["earnings", "reports", from, to, q, status, driverIdFromUrl, minVehicleRental],
-    queryFn: () =>
-      getEarningsReports({
-        from: from || undefined,
-        to: to || undefined,
-        q: q.trim() || undefined,
-        status: status || undefined,
-        driverId: driverIdFromUrl,
-        minVehicleRental: minVehicleRental.trim() ? Number(minVehicleRental) : undefined,
-      }).then((r) => r.data),
+    queryFn: () => getEarningsReports(reportFilters).then((r) => r.data),
+    enabled: user?.role === "admin" || user?.role === "accountant",
+  });
+
+  const commissionByBaseQuery = useQuery({
+    queryKey: ["earnings", "reports", "commission-base", from, to, q, status, driverIdFromUrl, minVehicleRental],
+    queryFn: () => getCommissionByBaseTypeReport(reportFilters).then((r) => r.data),
     enabled: user?.role === "admin" || user?.role === "accountant",
   });
 
@@ -278,7 +292,7 @@ export function EarningsReportsPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               <div className="rounded-xl border border-white/40 bg-white/70 px-4 py-3 shadow-sm">
                 <p className="text-xs text-slate-500">Total payout</p>
                 <p className="mt-1 text-base font-semibold text-slate-900">
@@ -297,6 +311,12 @@ export function EarningsReportsPage() {
                   {summary ? formatCurrency(summary.totalVehicleRental) : "—"}
                 </p>
               </div>
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3 shadow-sm">
+                <p className="text-xs text-indigo-700">Fleet commission (period)</p>
+                <p className="mt-1 text-base font-semibold text-indigo-900">
+                  {summary ? formatCurrency(summary.totalCompanyCommission ?? 0) : "—"}
+                </p>
+              </div>
               <div className="rounded-xl border border-red-100 bg-red-50/70 px-4 py-3 shadow-sm">
                 <p className="text-xs text-red-600">Outstanding debt</p>
                 <p className="mt-1 text-base font-semibold text-red-800">
@@ -304,6 +324,35 @@ export function EarningsReportsPage() {
                 </p>
               </div>
             </div>
+
+            {commissionByBaseQuery.data?.items && commissionByBaseQuery.data.items.length > 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
+                <h3 className="text-xs font-semibold text-slate-700 mb-2">Commission by base type</h3>
+                <p className="text-[11px] text-slate-500 mb-2">
+                  Same filters as the table. Avg rate is the mean of stored driver nominal rates (fraction) where rate ≠
+                  0.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {commissionByBaseQuery.data.items.map((row) => (
+                    <div
+                      key={row.commission_base_type}
+                      className="rounded-lg border border-indigo-100 bg-indigo-50/50 px-3 py-2 text-[11px] text-indigo-950 min-w-[200px]"
+                    >
+                      <p className="font-medium text-indigo-900">{commissionBaseTypeLabel(row.commission_base_type)}</p>
+                      <p className="tabular-nums mt-1">Payout rows: {row.payoutCount.toLocaleString()}</p>
+                      <p className="tabular-nums">Total commission: {formatCurrency(row.totalCompanyCommission)}</p>
+                      <p className="tabular-nums">Σ commission base: {formatCurrency(row.totalCommissionBase)}</p>
+                      <p className="tabular-nums text-indigo-800">
+                        Avg nominal rate:{" "}
+                        {row.avgCommissionRate > 0
+                          ? `${(row.avgCommissionRate * 100).toFixed(2).replace(/\.?0+$/, "")}%`
+                          : "—"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-4 space-y-4">
               <h2 className="text-sm font-semibold text-slate-900">Debt analytics</h2>

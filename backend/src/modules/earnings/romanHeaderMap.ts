@@ -181,6 +181,19 @@ reg(
   "trips",
 );
 
+reg(
+  [
+    "tips",
+    "tips glovo",
+    "bacsi",
+    "bacsis",
+    "propina",
+    "courier tips",
+    "driver tips",
+  ],
+  "tips",
+);
+
 /** Map each column index to canonical field (first wins per field). */
 export function buildColumnMap(headers: string[]): Map<number, CanonicalField> {
   const map = new Map<number, CanonicalField>();

@@ -16,17 +16,18 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-900 mb-2">Driver payout integrity</h3>
-        <p className="text-sm text-slate-500">No cash-commission rows found.</p>
+        <p className="text-sm text-slate-500">No sample rows found.</p>
       </div>
     );
   }
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-900 mb-3">Driver payout integrity (cash commission)</h3>
+      <h3 className="text-sm font-semibold text-slate-900 mb-3">Driver payout integrity</h3>
       <p className="text-[11px] text-slate-500 mb-3">
-        Breakdown shows transfer base (TVT), account opening fee tracked separately (does not change payout math),
-        and commissions.
+        Expected payout = net income (gross + tips ± taxa) minus fleet commission minus the absolute value of daily
+        cash (deduction magnitude). Stored daily cash may be negative in CSV. Commission base is stored per row when
+        present. TVT and account opening fee are shown for context only.
       </p>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-xs">
@@ -39,8 +40,8 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
               <th className="px-2 py-2 italic text-slate-500" title="Tracked separately; already in TVT">
                 Acct. fee
               </th>
-              <th className="px-2 py-2">Tfr comm</th>
-              <th className="px-2 py-2">Cash Commission</th>
+              <th className="px-2 py-2">Comm. base</th>
+              <th className="px-2 py-2">Commission</th>
               <th className="px-2 py-2" title="Full vehicle rental contract amount when trip falls in rental period">
                 Vehicle rental
               </th>
@@ -76,8 +77,28 @@ export function DriverPayoutTable({ rows }: DriverPayoutTableProps) {
                       ? `−${formatCurrency(toNum(r.account_opening_fee))}`
                       : "—"}
                   </td>
-                  <td className="px-2 py-2">{formatCurrency(toNum(r.transfer_commission))}</td>
-                  <td className="px-2 py-2">{formatCurrency(toNum(r.cash_commission))}</td>
+                  <td
+                    className="px-2 py-2 text-slate-600"
+                    title={
+                      r.commission_base != null && r.commission_base !== ""
+                        ? "Amount fleet commission was calculated on (import snapshot)"
+                        : undefined
+                    }
+                  >
+                    {r.commission_base != null && r.commission_base !== ""
+                      ? formatCurrency(toNum(r.commission_base))
+                      : "—"}
+                  </td>
+                  <td
+                    className="px-2 py-2"
+                    title={
+                      r.commission_base != null && r.commission_base !== ""
+                        ? `Base: ${formatCurrency(toNum(r.commission_base))}`
+                        : undefined
+                    }
+                  >
+                    {formatCurrency(toNum(r.company_commission))}
+                  </td>
                   <td className="px-2 py-2 text-slate-600">
                     {r.vehicle_rental_fee != null && toNum(r.vehicle_rental_fee) !== 0
                       ? formatCurrency(toNum(r.vehicle_rental_fee))

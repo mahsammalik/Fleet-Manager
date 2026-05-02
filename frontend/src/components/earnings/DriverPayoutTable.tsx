@@ -4,6 +4,7 @@ import type { PayoutListItem, PayoutProrationDetail } from "../../api/earnings";
 import { usePayoutSearch } from "../../hooks/usePayoutSearch";
 import { ConfirmDialog } from "../UI/ConfirmDialog";
 import { formatCurrency } from "../../utils/currency";
+import { commissionBaseTypeLabel } from "../../utils/commissionBaseLabels";
 
 type DriverPayoutTableProps = {
   rows: PayoutListItem[];
@@ -39,6 +40,47 @@ function periodLabel(row: PayoutListItem): string {
 function toNum(value: string | null | undefined): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function formatRatePctFromFraction(rNum: number): string {
+  if (!(rNum > 0)) return "—";
+  if (rNum <= 1) return `${(rNum * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
+  return `${rNum}%`;
+}
+
+/** Tooltip for fleet commission column (audit: base × nominal rate vs charged). */
+function payoutCommissionTitle(row: PayoutListItem): string {
+  const comp = toNum(row.company_commission);
+  const base = toNum(row.commission_base);
+  const rNum = toNum(row.commission_rate);
+  const pct = formatRatePctFromFraction(rNum);
+  const nominal = base > 0 && rNum > 0 && rNum <= 1 ? base * rNum : 0;
+  const extra =
+    base > 0.001 && nominal > 0 && Math.abs(comp - nominal) > 0.02
+      ? `\nEffective on base: ${((comp / base) * 100).toFixed(2).replace(/\.?0+$/, "")}%`
+      : "";
+  return `Fleet commission: ${formatCurrency(comp)}\nBase: ${formatCurrency(base)} (${commissionBaseTypeLabel(row.commission_base_type)})\nNominal rate: ${pct}${extra}`;
+}
+
+/** Native tooltip: linear payout chain. */
+function payoutGlovoBreakdownTitle(row: PayoutListItem): string | undefined {
+  const ni = row.net_income;
+  if (ni == null || ni === "") return undefined;
+  const rNum = toNum(row.commission_rate);
+  const pctLabel = formatRatePctFromFraction(rNum);
+  const baseLabel = commissionBaseTypeLabel(row.commission_base_type);
+  return [
+    `Base income: ${formatCurrency(toNum(row.income))}`,
+    `Tips: ${formatCurrency(toNum(row.tips))}`,
+    `Gross (Income + Tips): ${formatCurrency(toNum(row.total_gross_earnings))}`,
+    `Platform fees (Taxa): ${formatCurrency(toNum(row.total_platform_fees))}`,
+    `Net income: ${formatCurrency(toNum(row.net_income))}`,
+    `Commission base (${baseLabel}): ${formatCurrency(toNum(row.commission_base))}`,
+    `Commission (${pctLabel} nominal): ${formatCurrency(toNum(row.company_commission))}`,
+    `Daily cash deduction: ${formatCurrency(Math.abs(toNum(row.total_daily_cash)))} (stored sum may be signed)`,
+    `Raw period roll-up: ${formatCurrency(toNum(row.raw_net_amount))}`,
+    `Net payable: ${formatCurrency(toNum(row.net_driver_payout))}`,
+  ].join("\n");
 }
 
 function includesQuery(value: string | null | undefined, query: string): boolean {
@@ -263,6 +305,8 @@ export function DriverPayoutTable({
                 <tr>
                   <th className="px-3 py-2">Driver</th>
                   <th className="px-3 py-2">Period</th>
+                  <th className="px-3 py-2 text-right">Gross</th>
+                  <th className="px-3 py-2 text-right">Commission</th>
                   <th className="px-3 py-2 text-right">Net Payout</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Vehicle Rental</th>
@@ -313,7 +357,16 @@ export function DriverPayoutTable({
                         <td className="px-3 py-3 text-xs text-slate-700">
                           <HighlightText text={periodLabel(row)} query={debouncedQuery} />
                         </td>
-                        <td className="px-3 py-3 text-right">
+                        <td className="px-3 py-3 text-right tabular-nums text-slate-800">
+                          {formatCurrency(toNum(row.total_gross_earnings))}
+                        </td>
+                        <td
+                          className="px-3 py-3 text-right tabular-nums text-slate-800"
+                          title={payoutCommissionTitle(row)}
+                        >
+                          {formatCurrency(toNum(row.company_commission))}
+                        </td>
+                        <td className="px-3 py-3 text-right" title={payoutGlovoBreakdownTitle(row)}>
                           <div className="text-lg font-bold tabular-nums text-slate-900">
                             {formatCurrency(toNum(row.net_driver_payout))}
                           </div>
@@ -403,12 +456,43 @@ export function DriverPayoutTable({
                       </tr>
                       {isExpanded && (
                         <tr className="bg-slate-50/80">
-                          <td colSpan={6} className="px-3 py-3 text-xs text-slate-700">
+                          <td colSpan={8} className="px-3 py-3 text-xs text-slate-700">
                             <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                               <div>
                                 <p className="font-semibold text-slate-800">Breakdown</p>
-                                <p>Gross revenue: {formatCurrency(toNum(row.total_gross_earnings))}</p>
-                                <p>Company commission: {formatCurrency(toNum(row.company_commission))}</p>
+                                <p className="mt-1 font-medium text-slate-800">Payout chain</p>
+                                <p>Base income: {formatCurrency(toNum(row.income))}</p>
+                                <p>Tips: {formatCurrency(toNum(row.tips))}</p>
+                                <p>Gross (Income + Tips): {formatCurrency(toNum(row.total_gross_earnings))}</p>
+                                <p>Platform fees (Taxa): {formatCurrency(toNum(row.total_platform_fees))}</p>
+                                <p>Net income: {formatCurrency(toNum(row.net_income))}</p>
+                                <div className="mt-2 rounded-lg border border-violet-200/80 bg-violet-50/80 px-3 py-2 text-[11px] text-violet-950">
+                                  <p className="font-semibold text-violet-900">Commission</p>
+                                  <p className="mt-1">
+                                    Base: {formatCurrency(toNum(row.commission_base))}{" "}
+                                    <span className="text-violet-700">
+                                      ({commissionBaseTypeLabel(row.commission_base_type)})
+                                    </span>
+                                  </p>
+                                  <p>Rate (driver): {formatRatePctFromFraction(toNum(row.commission_rate))}</p>
+                                  <p className="font-semibold">Charged: {formatCurrency(toNum(row.company_commission))}</p>
+                                  {(() => {
+                                    const b = toNum(row.commission_base);
+                                    const r = toNum(row.commission_rate);
+                                    const c = toNum(row.company_commission);
+                                    const nominal = b > 0 && r > 0 && r <= 1 ? b * r : 0;
+                                    if (b <= 0.001 || nominal <= 0 || Math.abs(c - nominal) <= 0.02) return null;
+                                    return (
+                                      <p className="mt-1 text-violet-800">
+                                        Effective rate on base:{" "}
+                                        {`${((c / b) * 100).toFixed(2).replace(/\.?0+$/, "")}%`} (fixed / hybrid / minimum)
+                                      </p>
+                                    );
+                                  })()}
+                                </div>
+                                <p className="mt-2">
+                                  Daily cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
+                                </p>
                                 <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>
                                 <p>Debt applied: {formatCurrency(toNum(row.debt_applied_amount))}</p>
                                 <p className="font-semibold text-red-700">
@@ -507,7 +591,13 @@ export function DriverPayoutTable({
                       aria-label={`Select payout for ${row.first_name}`}
                     />
                   </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
+                  <p className="mt-2 flex flex-wrap justify-between gap-2 text-xs tabular-nums text-slate-700">
+                    <span>Gross {formatCurrency(toNum(row.total_gross_earnings))}</span>
+                    <span title={payoutCommissionTitle(row)}>
+                      Comm {formatCurrency(toNum(row.company_commission))}
+                    </span>
+                  </p>
+                  <div className="mt-1 flex items-center justify-between gap-2" title={payoutGlovoBreakdownTitle(row)}>
                     <p className="text-xl font-bold tabular-nums text-slate-900">
                       {formatCurrency(toNum(row.net_driver_payout))}
                     </p>
@@ -586,8 +676,26 @@ export function DriverPayoutTable({
                   {isExpanded && (
                     <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
                       <p className="font-semibold text-slate-800">Breakdown</p>
+                      <p className="mt-1 font-medium text-slate-800">Payout chain</p>
+                      <p>Base income: {formatCurrency(toNum(row.income))}</p>
+                      <p>Tips: {formatCurrency(toNum(row.tips))}</p>
                       <p>Gross: {formatCurrency(toNum(row.total_gross_earnings))}</p>
-                      <p>Commission: {formatCurrency(toNum(row.company_commission))}</p>
+                      <p>Platform fees: {formatCurrency(toNum(row.total_platform_fees))}</p>
+                      <p>Net income: {formatCurrency(toNum(row.net_income))}</p>
+                      <div className="mt-2 rounded-lg border border-violet-200/80 bg-violet-50/80 px-3 py-2 text-[11px] text-violet-950">
+                        <p className="font-semibold text-violet-900">Commission</p>
+                        <p className="mt-1">
+                          Base: {formatCurrency(toNum(row.commission_base))}{" "}
+                          <span className="text-violet-700">
+                            ({commissionBaseTypeLabel(row.commission_base_type)})
+                          </span>
+                        </p>
+                        <p>Rate: {formatRatePctFromFraction(toNum(row.commission_rate))}</p>
+                        <p className="font-semibold">Charged: {formatCurrency(toNum(row.company_commission))}</p>
+                      </div>
+                      <p className="mt-2">
+                        Daily cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
+                      </p>
                       <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>
                       <p>Debt applied: {formatCurrency(toNum(row.debt_applied_amount))}</p>
                       <p className="font-semibold text-red-700">
