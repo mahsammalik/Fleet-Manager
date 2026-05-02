@@ -23,6 +23,17 @@ import { stagingPayloadToPreviewRow } from "./previewRowMapper";
 import { parseCommissionBaseType, type CommissionBaseType } from "./calculatePayout";
 import { readOrgGlovoCommissionBase, writeOrgGlovoCommissionBase } from "./orgImportSettings";
 
+/** Platform net from row columns (matches netIncomeFromGrossAndTaxa in calculatePayout). Alias: er */
+const ER_NET_INCOME_SQL = `(
+  CASE
+    WHEN COALESCE(er.platform_fee, 0) < 0 THEN
+      COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) + COALESCE(er.platform_fee, 0)
+    ELSE COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) - COALESCE(er.platform_fee, 0)
+  END
+)`;
+
+const ER_DRIVER_PAYOUT_SQL = `ROUND((${ER_NET_INCOME_SQL})::numeric - COALESCE(er.company_commission, 0) - ABS(COALESCE(er.daily_cash, 0)), 2)`;
+
 const router = Router();
 
 router.use(authenticateJWT);
@@ -502,40 +513,16 @@ router.put("/records/:id/recalculate", async (req, res) => {
       id: string;
       driver_payout: string | null;
       net_earnings: string | null;
-      cash_commission: string | null;
       company_commission: string | null;
     }>(
       `UPDATE earnings_records er
-       SET
-         driver_payout = ROUND(
-           (
-             COALESCE(
-               er.total_transfer_earnings,
-               er.net_earnings,
-               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-               er.gross_earnings,
-               0
-             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
-           )::numeric,
-           2
-         ),
-         net_earnings = ROUND(
-           (
-             COALESCE(
-               er.total_transfer_earnings,
-               er.net_earnings,
-               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-               er.gross_earnings,
-               0
-             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
-           )::numeric,
-           2
-         )
+       SET driver_payout = ${ER_DRIVER_PAYOUT_SQL},
+           net_earnings = ${ER_DRIVER_PAYOUT_SQL}
        FROM earnings_imports ei
        WHERE er.import_id = ei.id
          AND ei.organization_id = $1
          AND er.id = $2::uuid
-       RETURNING er.id, er.driver_payout::text, er.net_earnings::text, er.cash_commission::text, er.company_commission::text`,
+       RETURNING er.id, er.driver_payout::text, er.net_earnings::text, er.company_commission::text`,
       [orgId, id],
     );
     if (!result.rowCount) return res.status(404).json({ message: "Payout record not found" });
@@ -554,35 +541,12 @@ router.post("/records/recalculate-bulk", async (req, res) => {
   try {
     const result = await pool.query<{ id: string }>(
       `UPDATE earnings_records er
-       SET
-         driver_payout = ROUND(
-           (
-             COALESCE(
-               er.total_transfer_earnings,
-               er.net_earnings,
-               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-               er.gross_earnings,
-               0
-             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
-           )::numeric,
-           2
-         ),
-         net_earnings = ROUND(
-           (
-             COALESCE(
-               er.total_transfer_earnings,
-               er.net_earnings,
-               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-               er.gross_earnings,
-               0
-             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
-           )::numeric,
-           2
-         )
+       SET driver_payout = ${ER_DRIVER_PAYOUT_SQL},
+           net_earnings = ${ER_DRIVER_PAYOUT_SQL}
        FROM earnings_imports ei
        WHERE er.import_id = ei.id
          AND ei.organization_id = $1
-         AND ($2::boolean = false OR COALESCE(er.cash_commission, 0) < 0)
+         AND ($2::boolean = false OR COALESCE(er.daily_cash, 0) <> 0)
        RETURNING er.id`,
       [orgId, onlyCash],
     );
@@ -699,10 +663,10 @@ router.get("/records/payout-integrity", async (req, res) => {
       platform: string;
       net_earnings: string | null;
       driver_payout: string | null;
-      cash_commission: string | null;
+      company_commission: string | null;
+      commission_base: string | null;
       total_transfer_earnings: string | null;
       account_opening_fee: string | null;
-      transfer_commission: string | null;
       vehicle_rental_fee: string | null;
       vehicle_rental_id: string | null;
       expected_payout: string | null;
@@ -715,43 +679,18 @@ router.get("/records/payout-integrity", async (req, res) => {
          er.platform,
          er.net_earnings::text,
          er.driver_payout::text,
-         er.cash_commission::text,
+         er.company_commission::text,
+         er.commission_base::text AS commission_base,
          er.total_transfer_earnings::text AS total_transfer_earnings,
          er.account_opening_fee::text AS account_opening_fee,
-         er.transfer_commission::text AS transfer_commission,
          er.vehicle_rental_fee::text,
          er.vehicle_rental_id::text,
-         ROUND(
-           (
-             COALESCE(
-               er.total_transfer_earnings,
-               er.net_earnings,
-               COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-               er.gross_earnings,
-               0
-             ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
-           )::numeric,
-           2
-         )::text AS expected_payout,
-         (
-           COALESCE(er.driver_payout, 0)::numeric(12, 2) =
-           ROUND(
-             (
-               COALESCE(
-                 er.total_transfer_earnings,
-                 er.net_earnings,
-                 COALESCE(er.gross_earnings, 0) - COALESCE(er.platform_fee, 0),
-                 er.gross_earnings,
-                 0
-               ) - COALESCE(er.transfer_commission, 0) - ABS(COALESCE(er.cash_commission, 0))
-             )::numeric,
-             2
-           )::numeric(12, 2)
-         ) AS ok
+         ${ER_DRIVER_PAYOUT_SQL}::text AS expected_payout,
+         (COALESCE(er.driver_payout, 0)::numeric(12, 2) = ${ER_DRIVER_PAYOUT_SQL}::numeric(12, 2)) AS ok
        FROM earnings_records er
        JOIN earnings_imports ei ON ei.id = er.import_id
        WHERE ei.organization_id = $1
-         AND COALESCE(er.cash_commission, 0) <> 0
+         AND (COALESCE(er.daily_cash, 0) <> 0 OR COALESCE(er.company_commission, 0) <> 0)
        ORDER BY er.trip_date DESC, er.created_at DESC
        LIMIT 100`,
       [orgId],
@@ -862,6 +801,16 @@ type EarningsReportRow = {
   payment_status: string;
   payment_date: string | null;
   total_gross_earnings: string | null;
+  income: string | null;
+  tips: string | null;
+  total_platform_fees: string | null;
+  total_daily_cash: string | null;
+  gross_income: string | null;
+  net_income: string | null;
+  company_commission: string | null;
+  commission_base: string | null;
+  commission_rate: string | null;
+  commission_base_type: string | null;
   first_name: string;
   last_name: string;
   phone: string | null;
@@ -884,7 +833,11 @@ async function fetchEarningsReportRows(
             dp.net_driver_payout::text, dp.raw_net_amount::text, dp.debt_amount::text,
             dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
-            dp.total_gross_earnings::text,
+            dp.total_gross_earnings::text, dp.income::text, dp.tips::text,
+            dp.total_platform_fees::text, dp.total_daily_cash::text,
+            dp.gross_income::text, dp.net_income::text,
+            dp.company_commission::text,
+            dp.commission_base::text, dp.commission_rate::text, dp.commission_base_type,
             d.first_name, d.last_name, d.phone, CONCAT(d.first_name, ' ', d.last_name) AS driver_name
      FROM driver_payouts dp
      INNER JOIN drivers d ON d.id = dp.driver_id
@@ -904,13 +857,17 @@ async function fetchEarningsReportSummary(orgId: string, filters: PayoutReportFi
     total_vehicle_rental: string | null;
     total_revenue: string | null;
     total_debt: string | null;
+    total_commission_legs: string | null;
+    total_company_commission: string | null;
   }>(
     `SELECT
        COUNT(*)::text AS row_count,
        COALESCE(SUM(dp.net_driver_payout), 0)::text AS total_net_payout,
        COALESCE(SUM(dp.vehicle_rental_fee), 0)::text AS total_vehicle_rental,
        COALESCE(SUM(dp.total_gross_earnings), 0)::text AS total_revenue,
-       COALESCE(SUM(dp.remaining_debt_amount), 0)::text AS total_debt
+       COALESCE(SUM(dp.remaining_debt_amount), 0)::text AS total_debt,
+       COALESCE(SUM(dp.company_commission), 0)::text AS total_commission_legs,
+       COALESCE(SUM(dp.company_commission), 0)::text AS total_company_commission
      FROM driver_payouts dp
      INNER JOIN drivers d ON d.id = dp.driver_id
      WHERE ${whereSql}`,
@@ -923,6 +880,8 @@ async function fetchEarningsReportSummary(orgId: string, filters: PayoutReportFi
     totalVehicleRental: parseFloat(summary?.total_vehicle_rental ?? "0"),
     totalRevenue: parseFloat(summary?.total_revenue ?? "0"),
     totalDebt: parseFloat(summary?.total_debt ?? "0"),
+    totalCommissionLegs: parseFloat(summary?.total_commission_legs ?? "0"),
+    totalCompanyCommission: parseFloat(summary?.total_company_commission ?? "0"),
   };
 }
 
@@ -945,7 +904,8 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
             dp.payment_period_start::text, dp.payment_period_end::text,
             dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
             dp.raw_net_amount::text, dp.debt_amount::text, dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
-            dp.total_gross_earnings::text, dp.company_commission::text,
+            dp.total_gross_earnings::text, dp.income::text, dp.tips::text, dp.total_platform_fees::text,
+            dp.total_daily_cash::text, dp.company_commission::text,
             dp.gross_income::text, dp.net_income::text, dp.commission_base::text,
             dp.commission_rate::text, dp.commission_base_type,
             dp.vehicle_rental_fee::text,
@@ -1021,6 +981,48 @@ router.get("/reports", async (req, res) => {
     // eslint-disable-next-line no-console
     console.error("Earnings reports preview error", err);
     return res.status(500).json({ message: "Failed to load reports" });
+  }
+});
+
+/** Aggregated fleet commission by stored commission_base_type (filtered like /reports). */
+router.get("/reports/commission-by-base-type", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  const filters = parsePayoutReportFilters(req.query as PayoutFilterQuery);
+  try {
+    const { whereSql, params } = buildPayoutReportWhereClause(orgId, filters);
+    const { rows } = await pool.query<{
+      commission_base_type: string;
+      payout_count: string;
+      total_company_commission: string | null;
+      total_commission_base: string | null;
+      avg_commission_rate: string | null;
+    }>(
+      `SELECT COALESCE(NULLIF(TRIM(dp.commission_base_type), ''), 'net_income') AS commission_base_type,
+              COUNT(*)::text AS payout_count,
+              SUM(COALESCE(dp.company_commission, 0))::text AS total_company_commission,
+              SUM(COALESCE(dp.commission_base, 0))::text AS total_commission_base,
+              AVG(NULLIF(dp.commission_rate, 0))::text AS avg_commission_rate
+         FROM driver_payouts dp
+         INNER JOIN drivers d ON d.id = dp.driver_id
+        WHERE ${whereSql}
+        GROUP BY 1
+        ORDER BY 1`,
+      params,
+    );
+    return res.json({
+      items: rows.map((r) => ({
+        commission_base_type: r.commission_base_type,
+        payoutCount: parseInt(r.payout_count ?? "0", 10),
+        totalCompanyCommission: parseFloat(r.total_company_commission ?? "0"),
+        totalCommissionBase: parseFloat(r.total_commission_base ?? "0"),
+        avgCommissionRate: parseFloat(r.avg_commission_rate ?? "0"),
+      })),
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("commission-by-base-type error", err);
+    return res.status(500).json({ message: "Failed to load commission summary" });
   }
 });
 
@@ -1602,7 +1604,13 @@ router.get("/reports/export", async (req, res) => {
       "phone",
       "period_start",
       "period_end",
+      "income",
+      "tips",
       "total_revenue",
+      "commission_base",
+      "commission_rate",
+      "commission_base_type",
+      "company_commission",
       "raw_net_amount",
       "net_payout",
       "debt_amount",
@@ -1625,7 +1633,13 @@ router.get("/reports/export", async (req, res) => {
           r.phone != null ? esc(r.phone) : "",
           r.payment_period_start,
           r.payment_period_end,
+          r.income ?? "",
+          r.tips ?? "",
           r.total_gross_earnings ?? "",
+          r.commission_base ?? "",
+          r.commission_rate ?? "",
+          r.commission_base_type ?? "",
+          r.company_commission ?? "",
           r.raw_net_amount ?? "",
           r.net_driver_payout ?? "",
           r.debt_amount ?? "",

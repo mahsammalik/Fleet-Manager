@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculatePayout,
   netIncomeFromGrossAndTaxa,
-  resolveTransferCommissionBase,
+  resolveFleetCommissionBase,
 } from "./calculatePayout";
 import type { DriverCommissionRow } from "./commission";
 
@@ -26,10 +26,40 @@ describe("netIncomeFromGrossAndTaxa", () => {
   });
 });
 
+describe("resolveFleetCommissionBase", () => {
+  it("uses platform net for net_income (ignores TVT)", () => {
+    const b = resolveFleetCommissionBase({
+      income: 100,
+      tips: 5,
+      taxa_aplicatie: 3,
+      plata_zilnica_cash: 0,
+      transferTotal: 999,
+      resolvedPlatformNet: 50,
+      driver: driverPct10,
+      commission_base_type: "net_income",
+    });
+    expect(b).toBe(102);
+  });
+
+  it("uses gross for gross_income", () => {
+    const b = resolveFleetCommissionBase({
+      income: 100,
+      tips: 5,
+      taxa_aplicatie: 3,
+      plata_zilnica_cash: 0,
+      transferTotal: null,
+      resolvedPlatformNet: null,
+      driver: driverPct10,
+      commission_base_type: "gross_income",
+    });
+    expect(b).toBe(105);
+  });
+});
+
 describe("calculatePayout", () => {
-  it("preserves legacy net_income transfer chain and dual-leg payout", () => {
+  it("uses net_income for commission and subtracts daily cash", () => {
     const r = calculatePayout({
-      venituri: 100,
+      income: 100,
       tips: 5,
       taxa_aplicatie: 3,
       plata_zilnica_cash: 20,
@@ -41,44 +71,14 @@ describe("calculatePayout", () => {
     expect(r.gross_income).toBe(105);
     expect(r.net_income).toBe(102);
     expect(r.commission_base).toBe(102);
-    expect(r.transfer_commission).toBeCloseTo(10.2, 5);
-    expect(r.cash_commission).toBeCloseTo(2, 5);
-    expect(r.driver_payout).toBeCloseTo(89.8, 5);
+    expect(r.company_commission).toBeCloseTo(10.2, 5);
+    expect(r.driver_payout).toBeCloseTo(71.8, 5);
     expect(r.commission_rate).toBeCloseTo(0.1, 5);
   });
 
-  it("uses gross_income (venituri + tips) as transfer commission base when set", () => {
+  it("commission ignores TVT ladder for percentage (uses gross+tips and taxa only)", () => {
     const r = calculatePayout({
-      venituri: 100,
-      tips: 5,
-      taxa_aplicatie: 3,
-      plata_zilnica_cash: 0,
-      transferTotal: null,
-      resolvedPlatformNet: 102,
-      driver: driverPct10,
-      commission_base_type: "gross_income",
-    });
-    expect(r.commission_base).toBe(105);
-    expect(r.driver_payout).toBeCloseTo(94.5, 5);
-  });
-
-  it("prefers TVT over CSV net for net_income base", () => {
-    const b = resolveTransferCommissionBase({
-      venituri: 10,
-      tips: 1,
-      taxa_aplicatie: 1,
-      plata_zilnica_cash: 0,
-      transferTotal: 999,
-      resolvedPlatformNet: 50,
-      driver: driverPct10,
-      commission_base_type: "net_income",
-    });
-    expect(b).toBe(999);
-  });
-
-  it("handles negative TVT (signed transfer commission)", () => {
-    const r = calculatePayout({
-      venituri: 100,
+      income: 100,
       tips: 0,
       taxa_aplicatie: 0,
       plata_zilnica_cash: 0,
@@ -87,55 +87,66 @@ describe("calculatePayout", () => {
       driver: driverPct10,
       commission_base_type: "net_income",
     });
-    expect(r.commission_base).toBe(-50);
-    expect(r.transfer_commission).toBeCloseTo(-5, 5);
-    expect(r.driver_payout).toBeCloseTo(-45, 5);
+    expect(r.net_income).toBe(100);
+    expect(r.company_commission).toBeCloseTo(10, 5);
+    expect(r.driver_payout).toBeCloseTo(90, 5);
   });
 
-  it("net_income uses sign rule when Taxa aplicatie is negative", () => {
+  it("gross_income base charges on gross while payout uses platform net", () => {
     const r = calculatePayout({
-      venituri: 670.88,
-      tips: 0,
-      taxa_aplicatie: -8.99,
+      income: 100,
+      tips: 5,
+      taxa_aplicatie: 3,
       plata_zilnica_cash: 0,
       transferTotal: null,
-      resolvedPlatformNet: 650,
+      resolvedPlatformNet: 102,
+      driver: driverPct10,
+      commission_base_type: "gross_income",
+    });
+    expect(r.net_income).toBe(102);
+    expect(r.commission_base).toBe(105);
+    expect(r.company_commission).toBeCloseTo(10.5, 5);
+    expect(r.driver_payout).toBeCloseTo(91.5, 5);
+  });
+
+  it("treats negative daily cash same as positive deduction (ABS)", () => {
+    const r = calculatePayout({
+      income: 100,
+      tips: 0,
+      taxa_aplicatie: 0,
+      plata_zilnica_cash: -200,
+      transferTotal: null,
+      resolvedPlatformNet: 100,
       driver: driverPct10,
       commission_base_type: "net_income",
     });
-    expect(r.gross_income).toBeCloseTo(670.88, 5);
-    expect(r.net_income).toBeCloseTo(661.89, 5);
+    expect(r.company_commission).toBeCloseTo(10, 5);
+    expect(r.driver_payout).toBeCloseTo(-110, 5);
   });
 
-  it("net_income_no_bonuses base uses sign rule for negative taxa (not gross - taxa)", () => {
-    const base = resolveTransferCommissionBase({
-      venituri: 670.88,
+  it("matches Excel-style row: net 13.09, 10% on net, daily cash -96.16", () => {
+    const driver10: DriverCommissionRow = {
+      commission_type: "percentage",
+      commission_rate: "10",
+      fixed_commission_amount: null,
+      minimum_commission: null,
+    };
+    const r = calculatePayout({
+      income: 13.09,
       tips: 0,
-      taxa_aplicatie: -8.99,
-      plata_zilnica_cash: 0,
+      taxa_aplicatie: 0,
+      plata_zilnica_cash: -96.16,
       transferTotal: null,
-      resolvedPlatformNet: null,
-      driver: driverPct10,
-      commission_base_type: "net_income_no_bonuses",
+      resolvedPlatformNet: 13.09,
+      driver: driver10,
+      commission_base_type: "net_income",
     });
-    expect(base).toBeCloseTo(661.89, 5);
+    expect(r.net_income).toBeCloseTo(13.09, 5);
+    expect(r.company_commission).toBeCloseTo(1.31, 5);
+    expect(r.driver_payout).toBeCloseTo(-84.38, 5);
   });
 
-  it("net_income_no_tips base applies taxa to venituri only with sign rule", () => {
-    const base = resolveTransferCommissionBase({
-      venituri: 100,
-      tips: 50,
-      taxa_aplicatie: -10,
-      plata_zilnica_cash: 0,
-      transferTotal: null,
-      resolvedPlatformNet: null,
-      driver: driverPct10,
-      commission_base_type: "net_income_no_tips",
-    });
-    expect(base).toBe(90);
-  });
-
-  it("fixed_amount commission ignores percentage legs in stored components", () => {
+  it("fixed_amount commission ignores net for percentage but uses fixed charge", () => {
     const driverFixed: DriverCommissionRow = {
       commission_type: "fixed_amount",
       commission_rate: "10",
@@ -143,7 +154,7 @@ describe("calculatePayout", () => {
       minimum_commission: null,
     };
     const r = calculatePayout({
-      venituri: 100,
+      income: 100,
       tips: 0,
       taxa_aplicatie: 0,
       plata_zilnica_cash: 0,
@@ -152,6 +163,7 @@ describe("calculatePayout", () => {
       driver: driverFixed,
     });
     expect(r.company_commission).toBe(25);
-    expect(r.driver_payout).toBe(100);
+    expect(r.net_income).toBe(100);
+    expect(r.driver_payout).toBeCloseTo(75, 5);
   });
 });

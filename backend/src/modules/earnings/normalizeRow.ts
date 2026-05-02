@@ -28,7 +28,7 @@ export interface NormalizedAmounts {
   /** Magnitude only; CSV may show negative (e.g. -71.44). */
   accountOpeningFee: number | null;
   tripCount: number | null;
-  /** Tips / bacșiș; gross remains venituri when both columns exist. */
+  /** Tips / bacșiș; gross remains base income (CSV Venituri) when both columns exist. */
   tips?: number | null;
 }
 

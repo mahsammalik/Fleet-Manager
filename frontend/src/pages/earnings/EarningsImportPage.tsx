@@ -28,7 +28,7 @@ const PROVIDER_OPTIONS = [
 ] as const;
 
 const GLOVO_COMMISSION_BASE_OPTIONS = [
-  { value: "net_income", label: "Net income (legacy / TVT chain)" },
+  { value: "net_income", label: "Net income (after platform fee / Taxa)" },
   { value: "gross_income", label: "Gross income (Venituri + Tips)" },
   { value: "net_income_no_tips", label: "Net without tips" },
   { value: "gross_income_no_tips", label: "Gross without tips" },
@@ -271,7 +271,10 @@ export function EarningsImportPage() {
           <div className="rounded-xl border border-amber-200/80 bg-amber-50/50 px-4 py-3 text-sm text-amber-950">
             <p className="font-medium text-amber-900">Glovo: fleet commission base</p>
             <p className="text-xs text-amber-900/80 mt-1">
-              Applies to new imports only. Snapshot is stored on each preview import.
+              Chooses the amount we multiply by each driver&apos;s commission rules (percentage, fixed, hybrid,
+              minimum). Driver payout is still{" "}
+              <span className="font-medium">net income (after fee) − commission − daily cash</span>. Applies to new
+              imports; each preview stores a snapshot of this setting.
             </p>
             <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
               <label htmlFor="glovo-commission-base" className="sr-only">
@@ -360,12 +363,12 @@ export function EarningsImportPage() {
             </div>
             {preview.platform === "glovo" && (
               <p className="text-xs text-slate-600">
-                Commission base snapshot for this file:{" "}
+                Fleet commission calculated on:{" "}
                 <span className="font-mono text-slate-800">
                   {preview.glovoCommissionBaseType ?? "net_income"}
                 </span>
-                . Cancel this preview, adjust the Glovo commission base on the import page, then upload again to use a
-                different base.
+                . Cancel this preview, change the Glovo commission base above, then upload again to use a different
+                base.
               </p>
             )}
 

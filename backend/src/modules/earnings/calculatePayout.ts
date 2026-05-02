@@ -1,5 +1,5 @@
 import type { DriverCommissionRow } from "./commission";
-import { computeCommissionComponents } from "./commission";
+import { computeCompanyCommissionFromBase } from "./commission";
 import { roundMoney } from "./debtAllocation";
 
 export type CommissionBaseType =
@@ -11,18 +11,23 @@ export type CommissionBaseType =
   | "gross_income_no_bonuses";
 
 export type CalculatePayoutInput = {
-  venituri: number | null;
+  /** Base earnings from import (CSV "Venituri" → canonical gross). */
+  income: number | null;
   tips: number | null;
   taxa_aplicatie: number | null;
-  /** Signed daily cash (Plata zilnica cu cash). */
+  /**
+   * Daily cash from import (may be negative in CSV). Payout always subtracts **magnitude**:
+   * `net_income - company_commission - ABS(value)`.
+   */
   plata_zilnica_cash: number | null;
-  /** TVT when present. */
+  /** TVT when present (stored on row; not used for fleet commission math). */
   transferTotal: number | null;
   /**
    * Same resolved `n` as earningsCommit after gross/fee/net inference (CSV net column).
    */
   resolvedPlatformNet: number | null;
   driver: DriverCommissionRow;
+  /** Which amount fleet commission is calculated on (org Glovo import setting). */
   commission_base_type?: CommissionBaseType;
 };
 
@@ -41,13 +46,32 @@ export function parseCommissionBaseType(raw: unknown): CommissionBaseType {
   return COMMISSION_BASE_TYPES.includes(v) ? v : "net_income";
 }
 
+/** Short labels for UI / audit copy. */
+export function commissionBaseTypeLabel(t: CommissionBaseType): string {
+  switch (t) {
+    case "net_income":
+      return "Net income (after platform fee)";
+    case "gross_income":
+      return "Gross income (income + tips)";
+    case "net_income_no_tips":
+      return "Net income without tips";
+    case "gross_income_no_tips":
+      return "Base income without tips";
+    case "net_income_no_bonuses":
+      return "Net income (no bonuses)";
+    case "gross_income_no_bonuses":
+      return "Gross income (no bonuses)";
+    default:
+      return t;
+  }
+}
+
 export type CalculatePayoutResult = {
   gross_income: number;
   net_income: number;
+  /** Amount fleet commission was calculated on (see `commission_base_type` on payout rollup). */
   commission_base: number;
   commission_rate: number;
-  transfer_commission: number;
-  cash_commission: number;
   company_commission: number;
   driver_payout: number;
   commission_type: string;
@@ -58,7 +82,7 @@ function num(v: number | null | undefined): number {
 }
 
 /**
- * Platform net for transparency ladder from gross (venituri + tips) and signed Taxa aplicatie.
+ * Platform net from gross (income + tips) and signed Taxa aplicatie.
  * Negative fee/rebate: net = gross + taxa. Non-negative: net = gross - taxa. Missing taxa → 0.
  */
 export function netIncomeFromGrossAndTaxa(gross: number, taxa_aplicatie: number | null | undefined): number {
@@ -68,35 +92,33 @@ export function netIncomeFromGrossAndTaxa(gross: number, taxa_aplicatie: number 
 }
 
 /**
- * Transfer-leg commission base. `net_income` preserves legacy parity:
- * COALESCE(transferTotal, resolvedPlatformNet, venituri, 0).
+ * Numeric base for fleet commission from org `commission_base_type` and row amounts.
+ * Payout line still uses {@link netIncomeFromGrossAndTaxa} on full gross; this only selects the commission numerator.
  */
-export function resolveTransferCommissionBase(input: CalculatePayoutInput): number {
-  const v = num(input.venituri);
+export function resolveFleetCommissionBase(input: CalculatePayoutInput): number {
+  const v = num(input.income);
   const tips = num(input.tips);
   const grossIncome = v + tips;
-  const netLadder = netIncomeFromGrossAndTaxa(grossIncome, input.taxa_aplicatie);
-  const netVenituriOnly = netIncomeFromGrossAndTaxa(v, input.taxa_aplicatie);
+  const platformNet = netIncomeFromGrossAndTaxa(grossIncome, input.taxa_aplicatie);
+  const netIncomeNoTips = netIncomeFromGrossAndTaxa(v, input.taxa_aplicatie);
   const t = input.commission_base_type ?? "net_income";
 
   switch (t) {
     case "gross_income":
-      return grossIncome;
-    case "net_income_no_tips":
-      return netVenituriOnly;
-    case "gross_income_no_tips":
-      return v;
-    case "net_income_no_bonuses":
-      return netLadder;
     case "gross_income_no_bonuses":
       return grossIncome;
+    case "gross_income_no_tips":
+      return v;
+    case "net_income_no_tips":
+      return netIncomeNoTips;
+    case "net_income_no_bonuses":
     case "net_income":
     default:
-      return input.transferTotal ?? input.resolvedPlatformNet ?? input.venituri ?? 0;
+      return platformNet;
   }
 }
 
-/** Driver commission_rate column is 0–100 (percent); DB transparency uses fraction. */
+/** Driver commission_rate column is 0–100 (percent); transparency uses fraction. */
 export function driverCommissionRateAsFraction(driver: DriverCommissionRow): number {
   const r = Number(driver.commission_rate ?? 0);
   if (!Number.isFinite(r)) return 0;
@@ -104,27 +126,24 @@ export function driverCommissionRateAsFraction(driver: DriverCommissionRow): num
 }
 
 /**
- * Glovo-style income ladder + fleet commission (dual leg). `driver_payout` matches earningsCommit parity.
+ * Fleet commission on {@link resolveFleetCommissionBase};
+ * driver_payout = platform net_income − company_commission − **ABS(daily cash)** (cash is always a deduction magnitude).
  */
 export function calculatePayout(input: CalculatePayoutInput): CalculatePayoutResult {
-  const v = num(input.venituri);
+  const v = num(input.income);
   const tips = num(input.tips);
   const gross_income = v + tips;
   const net_income = netIncomeFromGrossAndTaxa(gross_income, input.taxa_aplicatie);
-  const commission_base = resolveTransferCommissionBase(input);
-  const signedCash = num(input.plata_zilnica_cash);
-  const comm = computeCommissionComponents(input.driver, commission_base, signedCash);
-  const driver_payout = roundMoney(
-    commission_base - comm.transfer_commission - Math.abs(comm.cash_commission),
-  );
+  const dailyCashDeduction = Math.abs(num(input.plata_zilnica_cash));
+  const commission_base = resolveFleetCommissionBase(input);
+  const comm = computeCompanyCommissionFromBase(input.driver, commission_base);
+  const driver_payout = roundMoney(net_income - comm.company_commission - dailyCashDeduction);
 
   return {
     gross_income,
     net_income,
     commission_base,
     commission_rate: driverCommissionRateAsFraction(input.driver),
-    transfer_commission: comm.transfer_commission,
-    cash_commission: comm.cash_commission,
     company_commission: comm.company_commission,
     driver_payout,
     commission_type: comm.commission_type,

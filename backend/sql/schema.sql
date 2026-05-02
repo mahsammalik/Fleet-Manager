@@ -165,23 +165,23 @@ CREATE TABLE IF NOT EXISTS earnings_records (
     total_transfer_earnings DECIMAL(10, 2),
     daily_cash DECIMAL(10, 2),
     account_opening_fee DECIMAL(10, 2),
-    transfer_commission DECIMAL(10, 2),
-    cash_commission DECIMAL(10, 2),
-    has_cash_commission BOOLEAN GENERATED ALWAYS AS (COALESCE(cash_commission, 0) < 0) STORED,
+    has_cash_commission BOOLEAN GENERATED ALWAYS AS (COALESCE(daily_cash, 0) <> 0) STORED,
     company_commission DECIMAL(10, 2),
+    commission_base NUMERIC(12, 6),
     tips DECIMAL(10, 2),
     driver_payout DECIMAL(10, 2),
     driver_payout_after_cash DECIMAL(10, 2)
       GENERATED ALWAYS AS (
         ROUND(
           (
-            COALESCE(
-              total_transfer_earnings,
-              net_earnings,
-              COALESCE(gross_earnings, 0) - COALESCE(platform_fee, 0),
-              gross_earnings,
-              0
-            ) - COALESCE(transfer_commission, 0) - ABS(COALESCE(cash_commission, 0))
+            CASE
+              WHEN COALESCE(platform_fee, 0) < 0 THEN
+                COALESCE(gross_earnings, 0) + COALESCE(tips, 0) + COALESCE(platform_fee, 0)
+              ELSE
+                COALESCE(gross_earnings, 0) + COALESCE(tips, 0) - COALESCE(platform_fee, 0)
+            END
+            - COALESCE(company_commission, 0)
+            - ABS(COALESCE(daily_cash, 0))
           )::numeric,
           2
         )
@@ -200,7 +200,9 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     platform_id VARCHAR(255),
     payment_period_start DATE NOT NULL,
     payment_period_end DATE NOT NULL,
-    total_gross_earnings DECIMAL(12, 2),
+    income NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    tips NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    total_gross_earnings NUMERIC(12, 6) GENERATED ALWAYS AS (income + tips) STORED,
     total_platform_fees DECIMAL(10, 2),
     total_net_earnings DECIMAL(12, 2),
     total_daily_cash DECIMAL(12, 2) DEFAULT 0,
@@ -509,31 +511,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Earnings payout: signed transfer commission; cash leg uses ABS(cash_commission) for deduction (Glovo / Excel parity).
+-- Earnings payout: net income (gross + tips ± taxa) minus fleet commission minus **magnitude** of daily cash.
 CREATE OR REPLACE FUNCTION trg_enforce_driver_payout_after_cash()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  transfer_base numeric;
+  ni numeric;
   payout numeric;
 BEGIN
-  transfer_base := COALESCE(
-    NEW.total_transfer_earnings,
-    NEW.net_earnings,
-    COALESCE(NEW.gross_earnings, 0) - COALESCE(NEW.platform_fee, 0),
-    NEW.gross_earnings,
-    0
-  );
+  ni := CASE
+    WHEN COALESCE(NEW.platform_fee, 0) < 0 THEN
+      COALESCE(NEW.gross_earnings, 0) + COALESCE(NEW.tips, 0) + COALESCE(NEW.platform_fee, 0)
+    ELSE
+      COALESCE(NEW.gross_earnings, 0) + COALESCE(NEW.tips, 0) - COALESCE(NEW.platform_fee, 0)
+  END;
 
-  payout := ROUND(
-    (
-      transfer_base
-      - COALESCE(NEW.transfer_commission, 0)
-      - ABS(COALESCE(NEW.cash_commission, 0))
-    )::numeric,
-    2
-  );
+  payout := ROUND((ni - COALESCE(NEW.company_commission, 0) - ABS(COALESCE(NEW.daily_cash, 0)))::numeric, 2);
 
   NEW.driver_payout := payout;
   NEW.net_earnings := payout;
@@ -544,13 +538,12 @@ $$;
 DROP TRIGGER IF EXISTS trg_earnings_records_payout_after_cash ON earnings_records;
 CREATE TRIGGER trg_earnings_records_payout_after_cash
 BEFORE INSERT OR UPDATE OF
-  total_transfer_earnings,
-  net_earnings,
   gross_earnings,
   platform_fee,
-  transfer_commission,
-  cash_commission,
-  company_commission
+  tips,
+  company_commission,
+  daily_cash,
+  total_transfer_earnings
 ON earnings_records
 FOR EACH ROW
 EXECUTE FUNCTION trg_enforce_driver_payout_after_cash();

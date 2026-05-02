@@ -8,7 +8,8 @@
     "build": "tsc",
     "test": "vitest run",
     "start": "node dist/index.js",
-    "import-earnings-csv": "ts-node --transpile-only scripts/import-earnings-csv.ts"
+    "import-earnings-csv": "ts-node --transpile-only scripts/import-earnings-csv.ts",
+    "recompute-payout-debt": "ts-node --transpile-only scripts/recompute-payout-debt-all.ts"
   },
   "keywords": [],
   "author": "",

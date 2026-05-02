@@ -125,6 +125,14 @@ psql -U postgres -d your_database -f sql/schema.sql
 psql -U postgres -d your_database -f sql/migrations/001_add_organization_id_to_driver_documents.sql
 psql -U postgres -d your_database -f sql/migrations/002_soft_delete_drivers.sql
 psql -U postgres -d your_database -f sql/migrations/003_commission_system.sql
+
+# Commission legs sign fix (positive magnitudes + generated total_commission); then verify (expect empty result sets):
+psql -U postgres -d your_database -f sql/migrations/038_commission_legs_positive.sql
+psql -U postgres -d your_database -f sql/migrations/038_commission_legs_positive.verify.sql
+
+# Single company commission on net income (drops dual-leg columns); then verify:
+psql -U postgres -d your_database -f sql/migrations/039_single_company_commission.sql
+psql -U postgres -d your_database -f sql/migrations/039_single_company_commission.verify.sql
 ```
 
 ### 3. Frontend setup

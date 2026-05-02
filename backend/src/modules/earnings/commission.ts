@@ -7,65 +7,65 @@ export interface DriverCommissionRow {
   minimum_commission: string | number | null;
 }
 
-export interface CommissionComponentsResult {
-  transfer_commission: number;
-  cash_commission: number;
+export type CompanyCommissionResult = {
   company_commission: number;
   commission_type: string;
-}
+};
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** `cash_commission` is rate × signed daily cash; earnings commit / DB payout subtract `ABS(cash_commission)` for driver_net. */
-export function computeCommissionComponents(
+/**
+ * Fleet commission from the chosen **commission base** (per driver rules).
+ * Percentage: base × rate/100. Fixed: fixed amount. Hybrid: base × rate/100 + fixed. Then minimum floor.
+ */
+export function computeCompanyCommissionFromBase(
   driver: DriverCommissionRow,
-  transferAmount: number,
-  signedCashAmount: number,
-): CommissionComponentsResult {
+  commissionBase: number,
+): CompanyCommissionResult {
   const type = (driver.commission_type || "percentage") as CommissionType;
   const rate = Number(driver.commission_rate ?? 0);
   const fixedAmount = Number(driver.fixed_commission_amount ?? 0);
   const minimumCommission = Number(driver.minimum_commission ?? 0);
 
-  let transferCommission = 0;
-  let cashCommission = 0;
   let companyCommission = 0;
 
   if (type === "percentage") {
-    transferCommission = (transferAmount * rate) / 100;
-    cashCommission = (signedCashAmount * rate) / 100;
-    companyCommission = transferCommission + cashCommission;
+    companyCommission = round2((commissionBase * rate) / 100);
   } else if (type === "fixed_amount") {
-    companyCommission = fixedAmount;
+    companyCommission = round2(fixedAmount);
   } else {
-    transferCommission = (transferAmount * rate) / 100;
-    cashCommission = (signedCashAmount * rate) / 100;
-    companyCommission = transferCommission + cashCommission + fixedAmount;
+    companyCommission = round2((commissionBase * rate) / 100 + fixedAmount);
   }
 
   if (minimumCommission > 0 && companyCommission < minimumCommission) {
-    companyCommission = minimumCommission;
+    companyCommission = round2(minimumCommission);
   }
 
   return {
-    transfer_commission: round2(transferCommission),
-    cash_commission: round2(cashCommission),
-    company_commission: round2(companyCommission),
+    company_commission: companyCommission,
     commission_type: type,
   };
+}
+
+/** @deprecated Prefer {@link computeCompanyCommissionFromBase} (base may be gross or net). */
+export function computeCompanyCommissionFromNetIncome(
+  driver: DriverCommissionRow,
+  netIncome: number,
+): CompanyCommissionResult {
+  return computeCompanyCommissionFromBase(driver, netIncome);
 }
 
 export function computeCommission(
   driver: DriverCommissionRow,
   earningsBase: number,
 ): { company_commission: number; driver_payout: number; commission_type: string } {
-  const components = computeCommissionComponents(driver, earningsBase, 0);
-  const driverPayout = Math.max(0, earningsBase - components.company_commission);
+  const { company_commission, commission_type } = computeCompanyCommissionFromBase(driver, earningsBase);
+  const driverPayout = Math.max(0, earningsBase - company_commission);
   return {
-    company_commission: components.company_commission,
+    company_commission,
     driver_payout: round2(driverPayout),
-    commission_type: components.commission_type,
+    commission_type,
   };
 }
