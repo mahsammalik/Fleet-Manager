@@ -5,6 +5,7 @@ import { usePayoutSearch } from "../../hooks/usePayoutSearch";
 import { ConfirmDialog } from "../UI/ConfirmDialog";
 import { formatCurrency } from "../../utils/currency";
 import { commissionBaseTypeLabel } from "../../utils/commissionBaseLabels";
+import { earningsPlatformLabel } from "../../utils/earningsPlatformLabel";
 
 type DriverPayoutTableProps = {
   rows: PayoutListItem[];
@@ -460,6 +461,21 @@ export function DriverPayoutTable({
                             <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                               <div>
                                 <p className="font-semibold text-slate-800">Breakdown</p>
+                                <p className="mt-1">
+                                  Platform:{" "}
+                                  <span className="font-medium text-slate-900">
+                                    <HighlightText
+                                      text={earningsPlatformLabel(row.earnings_platform)}
+                                      query={debouncedQuery}
+                                    />
+                                  </span>
+                                </p>
+                                <p>
+                                  Account ID:{" "}
+                                  <span className="font-mono text-slate-800">
+                                    <HighlightText text={row.platform_id || "—"} query={debouncedQuery} />
+                                  </span>
+                                </p>
                                 <p className="mt-1 font-medium text-slate-800">Payout chain</p>
                                 <p>Base income: {formatCurrency(toNum(row.income))}</p>
                                 <p>Tips: {formatCurrency(toNum(row.tips))}</p>
@@ -676,6 +692,21 @@ export function DriverPayoutTable({
                   {isExpanded && (
                     <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
                       <p className="font-semibold text-slate-800">Breakdown</p>
+                      <p className="mt-1">
+                        Platform:{" "}
+                        <span className="font-medium text-slate-900">
+                          <HighlightText
+                            text={earningsPlatformLabel(row.earnings_platform)}
+                            query={debouncedQuery}
+                          />
+                        </span>
+                      </p>
+                      <p>
+                        Account ID:{" "}
+                        <span className="font-mono text-slate-800">
+                          <HighlightText text={row.platform_id || "—"} query={debouncedQuery} />
+                        </span>
+                      </p>
                       <p className="mt-1 font-medium text-slate-800">Payout chain</p>
                       <p>Base income: {formatCurrency(toNum(row.income))}</p>
                       <p>Tips: {formatCurrency(toNum(row.tips))}</p>

@@ -912,9 +912,20 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
             d.first_name, d.last_name, d.phone,
             CONCAT(d.first_name, ' ', d.last_name) AS driver_name,
             TO_CHAR(dp.payment_period_start, 'YYYY-MM-DD') AS period_start_label,
-            TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label
+            TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label,
+            er_plat.platform AS earnings_platform
      FROM driver_payouts dp
      INNER JOIN drivers d ON d.id = dp.driver_id
+     LEFT JOIN LATERAL (
+       SELECT er.platform
+       FROM earnings_records er
+       INNER JOIN earnings_imports ei ON ei.id = er.import_id AND ei.organization_id = dp.organization_id
+       WHERE er.driver_id = dp.driver_id
+         AND er.trip_date >= dp.payment_period_start
+         AND er.trip_date <= dp.payment_period_end
+       ORDER BY er.trip_date DESC
+       LIMIT 1
+     ) er_plat ON true
      WHERE ${whereSql}
      ORDER BY dp.payment_period_end DESC, dp.created_at DESC
      LIMIT $${nextParamIndex} OFFSET $${nextParamIndex + 1}`,
