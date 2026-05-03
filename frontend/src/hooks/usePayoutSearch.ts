@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PayoutListItem } from "../api/earnings";
+import { earningsPlatformLabel } from "../utils/earningsPlatformLabel";
 
 const DEFAULT_DEBOUNCE_MS = 300;
 
@@ -25,6 +26,8 @@ function payoutMatchesQuery(row: PayoutListItem, query: string, statusFilter: st
     row.last_name ?? "",
     row.phone ?? "",
     row.platform_id ?? "",
+    row.earnings_platform ?? "",
+    earningsPlatformLabel(row.earnings_platform),
     row.payment_status ?? "",
     payoutPeriodLabel(row),
     payoutVehicleRentalLabel(row),

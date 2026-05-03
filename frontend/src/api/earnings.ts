@@ -49,6 +49,8 @@ export interface PayoutListItem {
   id: string;
   driver_id: string;
   platform_id: string | null;
+  /** Earnings provider code from `earnings_records.platform` (e.g. uber, glovo). */
+  earnings_platform?: string | null;
   driver_name?: string;
   payment_period_start: string;
   payment_period_end: string;
