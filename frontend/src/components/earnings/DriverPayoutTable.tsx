@@ -491,7 +491,7 @@ export function DriverPayoutTable({
                                   })()}
                                 </div>
                                 <p className="mt-2">
-                                  Daily cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
+                                  Cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
                                 </p>
                                 <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>
                                 <p>Debt applied: {formatCurrency(toNum(row.debt_applied_amount))}</p>
@@ -694,7 +694,7 @@ export function DriverPayoutTable({
                         <p className="font-semibold">Charged: {formatCurrency(toNum(row.company_commission))}</p>
                       </div>
                       <p className="mt-2">
-                        Daily cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
+                        Cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
                       </p>
                       <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>
                       <p>Debt applied: {formatCurrency(toNum(row.debt_applied_amount))}</p>
