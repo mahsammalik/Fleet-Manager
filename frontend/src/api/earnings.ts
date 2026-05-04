@@ -281,19 +281,42 @@ export function getDebtsSummary() {
 
 export type DebtAdjustType = "adjust" | "forgive" | "cash_received" | "carry_forward";
 
+/** Debt-related fields on `driver_payouts` after adjust-debt (post-propagation snapshot). */
+export type AdjustDebtPayoutSnapshot = {
+  raw_net_amount: string | null;
+  debt_amount: string | null;
+  debt_applied_amount: string | null;
+  remaining_debt_amount: string | null;
+  net_driver_payout: string | null;
+  payment_status: string;
+  updated_at: string | null;
+};
+
+export type AdjustDebtResponse = {
+  ok: boolean;
+  payoutId?: string;
+  driverId?: string;
+  type: string;
+  previousRemaining?: number;
+  remainingDebtAmount?: number;
+  paymentStatus?: string;
+  payout?: AdjustDebtPayoutSnapshot | null;
+};
+
+/** `forgive` / `cash_received`: positive amount reduces remaining debt. `adjust`: positive reduces remaining; negative increases (corrections). */
 export function postPayoutAdjustDebt(
   payoutId: string,
   body: { type: DebtAdjustType; amount?: number; note?: string | null },
 ) {
-  return api.post<{
-    ok: boolean;
-    payoutId?: string;
-    driverId?: string;
-    type: string;
-    previousRemaining?: number;
-    remainingDebtAmount?: number;
-    paymentStatus?: string;
-  }>(`/earnings/payouts/${encodeURIComponent(payoutId)}/adjust-debt`, body);
+  return api.post<AdjustDebtResponse>(`/earnings/payouts/${encodeURIComponent(payoutId)}/adjust-debt`, body);
+}
+
+/** Alias for `postPayoutAdjustDebt` (same endpoint and payload). */
+export function adjustDebt(
+  payoutId: string,
+  body: { type: DebtAdjustType; amount?: number; note?: string | null },
+) {
+  return postPayoutAdjustDebt(payoutId, body);
 }
 
 export function postDebtsBulkCarryForward(body?: { driverIds?: string[]; from?: string; to?: string }) {
@@ -326,6 +349,9 @@ export function getDebtHistory(driverId: string) {
       created_at: string;
       period_start: string | null;
       period_end: string | null;
+      previous_remaining_debt: string | null;
+      new_remaining_debt: string | null;
+      applied_amount: string | null;
     }[];
     payouts: {
       id: string;

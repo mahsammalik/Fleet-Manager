@@ -229,7 +229,8 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     notes TEXT,
     approved_by UUID REFERENCES users(id),
     approved_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes
@@ -257,7 +258,10 @@ CREATE TABLE IF NOT EXISTS payout_adjustments (
     adjustment_type VARCHAR(32) NOT NULL
         CHECK (adjustment_type IN ('adjust', 'forgive', 'cash_received', 'carry_forward')),
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    previous_remaining_debt NUMERIC(12, 2),
+    new_remaining_debt NUMERIC(12, 2),
+    applied_amount NUMERIC(12, 2)
 );
 
 CREATE INDEX IF NOT EXISTS idx_payout_adjustments_org_payout

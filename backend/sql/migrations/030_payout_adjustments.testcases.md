@@ -26,9 +26,30 @@
 2. `POST /api/earnings/payouts/{week1_payout_id}/adjust-debt` with body `{ "type": "forgive", "note": "management" }`.
 3. Week 1: `remaining_debt_amount = 0`, `payment_status = 'hold'` (negative raw, cleared).
 4. `payout_adjustments` has one row: `adjustment_type = forgive`, `amount` equals change in remaining (negative delta).
+5. After migration 042: same row has `previous_remaining_debt`, `new_remaining_debt`, and `applied_amount` populated (`applied_amount` = reduction magnitude).
 
 ## Scenario D — Carry forward recompute
 
 1. `POST /api/earnings/debts/bulk-carry-forward` with optional `from` / `to` / `driverIds`.
 2. Response `driversProcessed` matches distinct drivers in filter.
 3. Re-run scenario B totals unchanged (within rounding) when data unchanged.
+
+## Scenario E — Partial forgive + re-import does not restore full debt
+
+1. Week 1 as in A with `remaining_debt_amount = 83.07`.
+2. `POST .../adjust-debt` with `{ "type": "forgive", "amount": 40 }` → remaining ≈ 43.07.
+3. Re-run earnings commit / carry-forward for that driver so `applyDebtCarryForward` runs on week 1 again.
+4. Expect `remaining_debt_amount` to stay ≈ 43.07 (not reset to 83.07).
+
+## Scenario F — `adjust` positive amount reduces remaining (negative increases)
+
+1. Payout with `remaining_debt_amount = 100`.
+2. `POST .../adjust-debt` with `{ "type": "adjust", "amount": 50 }`.
+3. Expect `remaining_debt_amount = 50` and audit `amount = -50` (signed delta new − previous).
+4. `POST .../adjust-debt` with `{ "type": "adjust", "amount": -50 }` on a row with remaining 50 → remaining `100`, audit `amount = +50`.
+
+## Scenario G — Forgive / cash cannot exceed remaining (400)
+
+1. `remaining_debt_amount = 100`.
+2. `POST .../adjust-debt` with `{ "type": "forgive", "amount": 120 }` → **400** with message about exceeding remaining.
+3. Same for `{ "type": "cash_received", "amount": 120 }`.

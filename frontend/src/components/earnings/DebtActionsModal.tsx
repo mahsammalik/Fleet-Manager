@@ -15,6 +15,10 @@ function toNum(value: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 export function DebtActionsModal({ row, open, onClose, onSuccess }: DebtActionsModalProps) {
   const [note, setNote] = useState("");
   const [amount, setAmount] = useState("");
@@ -25,6 +29,22 @@ export function DebtActionsModal({ row, open, onClose, onSuccess }: DebtActionsM
 
   const remaining = toNum(row.remaining_debt_amount);
   const rawNet = toNum(row.raw_net_amount);
+  const amountParsed = parseFloat(amount);
+  const amountOk = Number.isFinite(amountParsed);
+  const amountTrim = amount.trim();
+
+  /** Full forgive when amount left blank; otherwise capped partial reduce (same as forgive / cash_received). */
+  const reducePreviewRem =
+    amountTrim === ""
+      ? 0
+      : amountOk && amountParsed > 0
+        ? Math.max(0, round2(remaining - Math.min(remaining, round2(amountParsed))))
+        : null;
+  const adjustPreviewRem = amountOk ? Math.max(0, round2(remaining - round2(amountParsed))) : null;
+  const showAdjustOnlyPreview =
+    amountOk &&
+    amountParsed !== 0 &&
+    (amountParsed < 0 || (amountTrim !== "" && reducePreviewRem === null && adjustPreviewRem !== null));
 
   const resetForm = () => {
     setNote("");
@@ -110,22 +130,25 @@ export function DebtActionsModal({ row, open, onClose, onSuccess }: DebtActionsM
             />
           </div>
 
+          {(reducePreviewRem !== null || (adjustPreviewRem !== null && showAdjustOnlyPreview)) && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1 tabular-nums">
+              <p className="font-medium text-slate-800">Preview (before you confirm)</p>
+              {reducePreviewRem !== null && (
+                <p>
+                  Forgive, cash, or positive manual adjust: remaining →{" "}
+                  <span className="font-semibold">{formatCurrency(reducePreviewRem)}</span>
+                </p>
+              )}
+              {adjustPreviewRem !== null && showAdjustOnlyPreview && (
+                <p>
+                  Manual adjust: remaining → <span className="font-semibold">{formatCurrency(adjustPreviewRem)}</span>{" "}
+                  <span className="text-slate-500">(negative amount increases what is owed)</span>
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-2 pt-1">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                const v = parseFloat(amount);
-                if (!Number.isFinite(v)) {
-                  setErr("Enter an amount for manual adjust (positive increases remaining debt, negative reduces it).");
-                  return;
-                }
-                void submit("adjust", { amount: v });
-              }}
-              className="rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50"
-            >
-              Adjust debt (delta)
-            </button>
             <button
               type="button"
               disabled={busy}
@@ -139,7 +162,7 @@ export function DebtActionsModal({ row, open, onClose, onSuccess }: DebtActionsM
               }}
               className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
             >
-              Forgive (optional partial amount)
+              Forgive debt (optional partial amount)
             </button>
             <button
               type="button"
@@ -155,6 +178,21 @@ export function DebtActionsModal({ row, open, onClose, onSuccess }: DebtActionsM
               className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
             >
               Cash received
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                const v = parseFloat(amount);
+                if (!Number.isFinite(v)) {
+                  setErr("Enter a number for manual adjust: positive reduces remaining debt; negative increases it.");
+                  return;
+                }
+                void submit("adjust", { amount: v });
+              }}
+              className="rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50"
+            >
+              Manual adjust (advanced)
             </button>
             <button
               type="button"

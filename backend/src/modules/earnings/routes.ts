@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { Router } from "express";
 import { authenticateJWT, requireRole } from "../../middleware/auth";
 import { pool, query } from "../../db/pool";
@@ -33,6 +34,25 @@ const ER_NET_INCOME_SQL = `(
 )`;
 
 const ER_DRIVER_PAYOUT_SQL = `ROUND((${ER_NET_INCOME_SQL})::numeric - COALESCE(er.company_commission, 0) - ABS(COALESCE(er.daily_cash, 0)), 2)`;
+
+async function selectPayoutDebtSnapshot(client: PoolClient, orgId: string, payoutId: string) {
+  const r = await client.query<{
+    raw_net_amount: string | null;
+    debt_amount: string | null;
+    debt_applied_amount: string | null;
+    remaining_debt_amount: string | null;
+    net_driver_payout: string | null;
+    payment_status: string;
+    updated_at: string | null;
+  }>(
+    `SELECT raw_net_amount::text, debt_amount::text, debt_applied_amount::text, remaining_debt_amount::text,
+            net_driver_payout::text, payment_status, updated_at::text AS updated_at
+     FROM driver_payouts
+     WHERE id = $1::uuid AND organization_id = $2::uuid`,
+    [payoutId, orgId],
+  );
+  return r.rows[0] ?? null;
+}
 
 const router = Router();
 
@@ -1190,6 +1210,7 @@ router.patch("/payouts/bulk", async (req, res) => {
 
 const DEBT_ADJUST_TYPES = new Set(["adjust", "forgive", "cash_received", "carry_forward"]);
 
+/** Manual debt: `forgive` / `cash_received` reduce remaining (positive amount). `adjust`: positive amount subtracts from remaining (reduces collectible); negative amount adds (correction / increase owed). Stored `payout_adjustments.amount` remains signed delta (new − previous). */
 router.post("/payouts/:id/adjust-debt", async (req, res) => {
   const orgId = req.user?.orgId;
   const userId = req.user?.sub;
@@ -1242,36 +1263,88 @@ router.post("/payouts/:id/adjust-debt", async (req, res) => {
 
     if (type === "carry_forward") {
       await client.query(
-        `INSERT INTO payout_adjustments (organization_id, payout_id, amount, reason, adjustment_type, created_by)
-         VALUES ($1::uuid, $2::uuid, 0, $3, 'carry_forward', $4::uuid)`,
+        `INSERT INTO payout_adjustments (organization_id, payout_id, amount, reason, adjustment_type, created_by,
+         previous_remaining_debt, new_remaining_debt, applied_amount)
+         VALUES ($1::uuid, $2::uuid, 0, $3, 'carry_forward', $4::uuid, NULL, NULL, NULL)`,
         [orgId, payoutId, note, userId],
       );
       await recomputeDriverDebtAllocation(client, orgId, row.driver_id);
+      const carrySnapshot = await selectPayoutDebtSnapshot(client, orgId, payoutId);
       await client.query("COMMIT");
-      return res.json({ ok: true, driverId: row.driver_id, type: "carry_forward" });
+      return res.json({
+        ok: true,
+        driverId: row.driver_id,
+        type: "carry_forward",
+        payoutId,
+        payout: carrySnapshot,
+      });
     }
 
     let newRem = oldRem;
 
     if (type === "forgive") {
-      const take =
-        amountNum != null && amountNum > 0 ? roundMoney(Math.min(oldRem, amountNum)) : oldRem;
+      let take: number;
+      if (amountNum != null && String(amountRaw).trim() !== "") {
+        if (amountNum < 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            message: "Forgive amount must be positive (or omit amount to forgive all remaining debt).",
+          });
+        }
+        const absAmt = roundMoney(Math.abs(roundMoney(amountNum)));
+        if (!Number.isFinite(absAmt) || absAmt <= 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            message: "Partial forgive: enter a positive amount, or omit amount to forgive all remaining debt.",
+          });
+        }
+        if (absAmt > oldRem) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ message: "Forgive amount cannot exceed current remaining debt" });
+        }
+        take = roundMoney(Math.min(oldRem, absAmt));
+      } else {
+        take = oldRem;
+      }
       newRem = roundMoney(Math.max(0, oldRem - take));
     } else if (type === "cash_received") {
-      if (amountNum == null || amountNum <= 0) {
+      if (amountNum == null || String(amountRaw).trim() === "") {
         await client.query("ROLLBACK");
-        return res.status(400).json({ message: "amount is required and must be positive for cash_received" });
+        return res.status(400).json({ message: "amount is required for cash_received" });
       }
-      newRem = roundMoney(Math.max(0, oldRem - roundMoney(amountNum)));
+      if (amountNum < 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Cash received amount must be a positive number" });
+      }
+      const payAmt = roundMoney(Math.abs(roundMoney(amountNum)));
+      if (!Number.isFinite(payAmt) || payAmt <= 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "amount must be a positive number for cash_received" });
+      }
+      if (payAmt > oldRem) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Cash received cannot exceed current remaining debt" });
+      }
+      newRem = roundMoney(Math.max(0, oldRem - payAmt));
     } else if (type === "adjust") {
       if (amountNum == null || !Number.isFinite(amountNum)) {
         await client.query("ROLLBACK");
-        return res.status(400).json({ message: "amount delta is required for adjust" });
+        return res.status(400).json({ message: "amount is required for adjust" });
       }
-      newRem = roundMoney(Math.max(0, oldRem + roundMoney(amountNum)));
+      // Positive = reduce remaining collectible; negative = increase (correction).
+      newRem = roundMoney(Math.max(0, oldRem - roundMoney(amountNum)));
+    }
+
+    if (type === "forgive" || type === "cash_received") {
+      if (newRem > oldRem) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ message: "Invalid debt adjustment: remaining would increase" });
+      }
     }
 
     const delta = roundMoney(newRem - oldRem);
+    const appliedAmount =
+      type === "forgive" || type === "cash_received" ? roundMoney(Math.max(0, oldRem - newRem)) : null;
     const nextStatus =
       newRem > 0
         ? rawNet < 0
@@ -1284,20 +1357,24 @@ router.post("/payouts/:id/adjust-debt", async (req, res) => {
             : "pending";
 
     await client.query(
-      `INSERT INTO payout_adjustments (organization_id, payout_id, amount, reason, adjustment_type, created_by)
-       VALUES ($1::uuid, $2::uuid, $3, $4, $5::varchar(32), $6::uuid)`,
-      [orgId, payoutId, delta, note, type, userId],
+      `INSERT INTO payout_adjustments (organization_id, payout_id, amount, reason, adjustment_type, created_by,
+       previous_remaining_debt, new_remaining_debt, applied_amount)
+       VALUES ($1::uuid, $2::uuid, $3, $4, $5::varchar(32), $6::uuid, $7, $8, $9)`,
+      [orgId, payoutId, delta, note, type, userId, oldRem, newRem, appliedAmount],
     );
 
     await client.query(
       `UPDATE driver_payouts
        SET remaining_debt_amount = $1,
-           payment_status = $2
+           payment_status = $2,
+           updated_at = NOW()
        WHERE id = $3::uuid AND organization_id = $4::uuid`,
       [newRem, nextStatus, payoutId, orgId],
     );
 
     await propagateDebtAfterManualEdit(client, orgId, row.driver_id, row.payment_period_end.slice(0, 10), row.id);
+
+    const payoutSnapshot = await selectPayoutDebtSnapshot(client, orgId, payoutId);
 
     await client.query("COMMIT");
     return res.json({
@@ -1308,6 +1385,7 @@ router.post("/payouts/:id/adjust-debt", async (req, res) => {
       previousRemaining: oldRem,
       remainingDebtAmount: newRem,
       paymentStatus: nextStatus,
+      payout: payoutSnapshot,
     });
   } catch (err) {
     try {
@@ -1537,9 +1615,15 @@ router.get("/debts/history/:driverId", async (req, res) => {
       created_at: string;
       period_start: string | null;
       period_end: string | null;
+      previous_remaining_debt: string | null;
+      new_remaining_debt: string | null;
+      applied_amount: string | null;
     }>(
       `SELECT pa.id::text, pa.payout_id::text, pa.amount::text, pa.reason, pa.adjustment_type, pa.created_at::text,
-              dp.payment_period_start::text AS period_start, dp.payment_period_end::text AS period_end
+              dp.payment_period_start::text AS period_start, dp.payment_period_end::text AS period_end,
+              pa.previous_remaining_debt::text AS previous_remaining_debt,
+              pa.new_remaining_debt::text AS new_remaining_debt,
+              pa.applied_amount::text AS applied_amount
        FROM payout_adjustments pa
        INNER JOIN driver_payouts dp ON dp.id = pa.payout_id AND dp.organization_id = pa.organization_id
        WHERE pa.organization_id = $1::uuid AND dp.driver_id = $2::uuid
