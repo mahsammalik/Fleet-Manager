@@ -4,6 +4,31 @@ export function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/**
+ * When re-applying carry-forward for a negative raw_net period, preserve manually reduced
+ * remaining (partial forgive) or manually increased remaining (delta adjust), without
+ * resetting to full abs(raw_net) on every allocation pass.
+ */
+export function nextRemainingForNegativePayoutRow(params: {
+  debtAmount: number;
+  existingRem: number;
+  paymentStatus: string;
+}): number {
+  const { debtAmount, existingRem, paymentStatus } = params;
+  const rem = roundMoney(Math.max(0, existingRem));
+  const debt = roundMoney(Math.max(0, debtAmount));
+  if (paymentStatus === "hold" && rem === 0) {
+    return 0;
+  }
+  if (rem <= debt) {
+    if (rem > 0) {
+      return roundMoney(Math.min(debt, rem));
+    }
+    return debt;
+  }
+  return rem;
+}
+
 type CurrentPayoutRow = {
   id: string;
   driver_id: string;
@@ -57,11 +82,11 @@ export async function applyDebtCarryForward(client: PoolClient, orgId: string, p
   if (rawNet < 0) {
     debtAmount = roundMoney(Math.abs(rawNet));
     const existingRem = roundMoney(Number(current.remaining_debt_amount ?? "0"));
-    if (current.payment_status === "hold" && existingRem === 0) {
-      remainingDebtAmount = 0;
-    } else {
-      remainingDebtAmount = debtAmount;
-    }
+    remainingDebtAmount = nextRemainingForNegativePayoutRow({
+      debtAmount,
+      existingRem,
+      paymentStatus: current.payment_status,
+    });
   } else {
     let available = rawNet;
     for (const debt of outstandingDebtRes.rows) {
