@@ -148,9 +148,10 @@ export async function runEarningsCommitFromStaging(
     let g = gross;
     let n = net;
     let f = fee;
-    if (g === null && n !== null && f !== null) g = n + f;
-    if (n === null && g !== null && f !== null) n = g - f;
-    if (f === null && g !== null && n !== null) f = g - n;
+    if (g === null && n !== null && f !== null) g = n + Math.abs(f);
+    if (n === null && g !== null && f !== null) n = g - Math.abs(f);
+    if (f === null && g !== null && n !== null) f = Math.abs(g - n);
+    if (f !== null) f = Math.abs(f);
 
     const tipsVal = p.amounts.tips ?? null;
     const calc = calculatePayout({
@@ -281,6 +282,7 @@ export async function runEarningsCommitFromStaging(
       comm: number;
       payout: number;
       dailyCash: number;
+      accountOpeningFee: number;
       vehicleRentalFee: number;
       platformId: string | null;
       glovoGross: number;
@@ -298,6 +300,7 @@ export async function runEarningsCommitFromStaging(
       comm: 0,
       payout: 0,
       dailyCash: 0,
+      accountOpeningFee: 0,
       vehicleRentalFee: 0,
       platformId: null,
       glovoGross: 0,
@@ -311,7 +314,8 @@ export async function runEarningsCommitFromStaging(
     cur.net += r.net ?? 0;
     cur.comm += r.company_commission;
     cur.payout += r.driver_payout;
-    cur.dailyCash += r.daily_cash ?? 0;
+    cur.dailyCash += Math.abs(r.daily_cash ?? 0);
+    cur.accountOpeningFee += Math.abs(r.account_opening_fee ?? 0);
     cur.platformId ??= r.platform_id ?? null;
     cur.glovoGross += r.glovo_gross_income;
     cur.glovoNet += r.glovo_net_income;
@@ -328,12 +332,12 @@ export async function runEarningsCommitFromStaging(
       `INSERT INTO driver_payouts (
           organization_id, driver_id, platform_id, payment_period_start, payment_period_end,
           income, tips, total_platform_fees, total_net_earnings,
-          total_daily_cash,
+          total_daily_cash, account_opening_fee,
           company_commission, raw_net_amount, net_driver_payout, debt_amount, debt_applied_amount, remaining_debt_amount,
           vehicle_rental_fee, payment_status,
           gross_income, net_income, commission_base, commission_rate, commission_base_type
-        ) VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, 0, 0, 0, 0, $13, 'pending',
-          $14, $15, $16, $17, $18)
+        ) VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12, $13, 0, 0, 0, 0, $14, 'pending',
+          $15, $16, $17, $18, $19)
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
         DO UPDATE SET
           platform_id = COALESCE(driver_payouts.platform_id, EXCLUDED.platform_id),
@@ -342,8 +346,13 @@ export async function runEarningsCommitFromStaging(
           total_platform_fees = COALESCE(driver_payouts.total_platform_fees, 0) + EXCLUDED.total_platform_fees,
           total_net_earnings = COALESCE(driver_payouts.total_net_earnings, 0) + EXCLUDED.total_net_earnings,
           total_daily_cash = COALESCE(driver_payouts.total_daily_cash, 0) + EXCLUDED.total_daily_cash,
+          account_opening_fee = COALESCE(driver_payouts.account_opening_fee, 0) + EXCLUDED.account_opening_fee,
           company_commission = COALESCE(driver_payouts.company_commission, 0) + EXCLUDED.company_commission,
-          raw_net_amount = COALESCE(driver_payouts.raw_net_amount, 0) + EXCLUDED.raw_net_amount,
+          raw_net_amount = (
+            COALESCE(driver_payouts.total_net_earnings, 0) + COALESCE(EXCLUDED.total_net_earnings, 0)
+          ) - ABS(
+            COALESCE(driver_payouts.account_opening_fee, 0) + COALESCE(EXCLUDED.account_opening_fee, 0)
+          ),
           vehicle_rental_fee = COALESCE(driver_payouts.vehicle_rental_fee, 0) + EXCLUDED.vehicle_rental_fee,
           gross_income = COALESCE(driver_payouts.gross_income, 0) + EXCLUDED.gross_income,
           net_income = COALESCE(driver_payouts.net_income, 0) + EXCLUDED.net_income,
@@ -362,8 +371,9 @@ export async function runEarningsCommitFromStaging(
         agg.fee,
         agg.net,
         agg.dailyCash,
+        roundMoney(agg.accountOpeningFee),
         agg.comm,
-        agg.payout,
+        roundMoney(agg.payout - Math.abs(agg.accountOpeningFee)),
         agg.vehicleRentalFee,
         roundMoney(agg.glovoGross),
         roundMoney(agg.glovoNet),

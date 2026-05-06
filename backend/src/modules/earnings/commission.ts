@@ -28,15 +28,16 @@ export function computeCompanyCommissionFromBase(
   const rate = Number(driver.commission_rate ?? 0);
   const fixedAmount = Number(driver.fixed_commission_amount ?? 0);
   const minimumCommission = Number(driver.minimum_commission ?? 0);
+  const safeBase = Math.max(0, commissionBase);
 
   let companyCommission = 0;
 
   if (type === "percentage") {
-    companyCommission = round2((commissionBase * rate) / 100);
+    companyCommission = round2((safeBase * rate) / 100);
   } else if (type === "fixed_amount") {
     companyCommission = round2(fixedAmount);
   } else {
-    companyCommission = round2((commissionBase * rate) / 100 + fixedAmount);
+    companyCommission = round2((safeBase * rate) / 100 + fixedAmount);
   }
 
   if (minimumCommission > 0 && companyCommission < minimumCommission) {

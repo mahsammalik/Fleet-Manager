@@ -146,7 +146,7 @@ export function EarningsReportsPreviewTable({
 
       <div className={`${mobileOpen ? "block" : "hidden"} overflow-x-auto rounded-xl border border-slate-200/80 bg-white/50 md:block`}>
         <div className={scrollShellClass}>
-          <table className="min-w-[1580px] w-full border-collapse text-left text-xs">
+          <table className="min-w-[1680px] w-full border-collapse text-left text-xs">
             <thead className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50/95 text-slate-600 shadow-[0_1px_0_rgb(226_232_240)]">
               <tr>
                 <th className="px-3 py-2.5">
@@ -180,6 +180,9 @@ export function EarningsReportsPreviewTable({
                 </th>
                 <th className="px-3 py-2.5 text-right" title="Driver nominal rate (decimal fraction)">
                   Rate
+                </th>
+                <th className="px-3 py-2.5 text-right" title="Period account opening fee deducted from raw net">
+                  Acct opening fee
                 </th>
                 <th className="px-3 py-2.5 text-left max-w-[140px]" title="Org import setting snapshot">
                   Base type
@@ -246,6 +249,9 @@ export function EarningsReportsPreviewTable({
                         if (!(r > 0)) return "—";
                         return r <= 1 ? `${(r * 100).toFixed(2).replace(/\.?0+$/, "")}%` : `${r}%`;
                       })()}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-rose-700">
+                      {formatCurrency(asNumber(row.account_opening_fee))}
                     </td>
                     <td className="px-3 py-2 text-[11px] leading-snug text-slate-600 max-w-[140px]">
                       {commissionBaseTypeLabel(row.commission_base_type)}

@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     total_platform_fees DECIMAL(10, 2),
     total_net_earnings DECIMAL(12, 2),
     total_daily_cash DECIMAL(12, 2) DEFAULT 0,
+    account_opening_fee NUMERIC(12, 6) DEFAULT 0,
     company_commission DECIMAL(10, 2),
     gross_income NUMERIC(12, 6),
     net_income NUMERIC(12, 6),

@@ -79,6 +79,7 @@ function payoutGlovoBreakdownTitle(row: PayoutListItem): string | undefined {
     `Commission base (${baseLabel}): ${formatCurrency(toNum(row.commission_base))}`,
     `Commission (${pctLabel} nominal): ${formatCurrency(toNum(row.company_commission))}`,
     `Daily cash deduction: ${formatCurrency(Math.abs(toNum(row.total_daily_cash)))} (stored sum may be signed)`,
+    `Account opening fee deduction: ${formatCurrency(Math.abs(toNum(row.account_opening_fee)))}`,
     `Raw period roll-up: ${formatCurrency(toNum(row.raw_net_amount))}`,
     `Net payable: ${formatCurrency(toNum(row.net_driver_payout))}`,
   ].join("\n");
@@ -509,6 +510,10 @@ export function DriverPayoutTable({
                                 <p className="mt-2">
                                   Cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
                                 </p>
+                                <p>
+                                  Account opening fee (deduction):{" "}
+                                  {formatCurrency(Math.abs(toNum(row.account_opening_fee)))}
+                                </p>
                                 <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>
                                 <p>Debt applied: {formatCurrency(toNum(row.debt_applied_amount))}</p>
                                 <p className="font-semibold text-red-700">
@@ -726,6 +731,10 @@ export function DriverPayoutTable({
                       </div>
                       <p className="mt-2">
                         Cash (deduction): {formatCurrency(Math.abs(toNum(row.total_daily_cash)))}
+                      </p>
+                      <p>
+                        Account opening fee (deduction):{" "}
+                        {formatCurrency(Math.abs(toNum(row.account_opening_fee)))}
                       </p>
                       <p>Raw net: {formatCurrency(toNum(row.raw_net_amount))}</p>
                       <p>Debt applied: {formatCurrency(toNum(row.debt_applied_amount))}</p>

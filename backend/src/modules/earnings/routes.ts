@@ -26,11 +26,7 @@ import { readOrgGlovoCommissionBase, writeOrgGlovoCommissionBase } from "./orgIm
 
 /** Platform net from row columns (matches netIncomeFromGrossAndTaxa in calculatePayout). Alias: er */
 const ER_NET_INCOME_SQL = `(
-  CASE
-    WHEN COALESCE(er.platform_fee, 0) < 0 THEN
-      COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) + COALESCE(er.platform_fee, 0)
-    ELSE COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) - COALESCE(er.platform_fee, 0)
-  END
+  COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) - ABS(COALESCE(er.platform_fee, 0))
 )`;
 
 const ER_DRIVER_PAYOUT_SQL = `ROUND((${ER_NET_INCOME_SQL})::numeric - COALESCE(er.company_commission, 0) - ABS(COALESCE(er.daily_cash, 0)), 2)`;
@@ -825,6 +821,7 @@ type EarningsReportRow = {
   tips: string | null;
   total_platform_fees: string | null;
   total_daily_cash: string | null;
+  account_opening_fee: string | null;
   gross_income: string | null;
   net_income: string | null;
   company_commission: string | null;
@@ -854,7 +851,7 @@ async function fetchEarningsReportRows(
             dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
             dp.total_gross_earnings::text, dp.income::text, dp.tips::text,
-            dp.total_platform_fees::text, dp.total_daily_cash::text,
+            dp.total_platform_fees::text, dp.total_daily_cash::text, dp.account_opening_fee::text,
             dp.gross_income::text, dp.net_income::text,
             dp.company_commission::text,
             dp.commission_base::text, dp.commission_rate::text, dp.commission_base_type,
@@ -925,7 +922,7 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
             dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
             dp.raw_net_amount::text, dp.debt_amount::text, dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.total_gross_earnings::text, dp.income::text, dp.tips::text, dp.total_platform_fees::text,
-            dp.total_daily_cash::text, dp.company_commission::text,
+            dp.total_daily_cash::text, dp.account_opening_fee::text, dp.company_commission::text,
             dp.gross_income::text, dp.net_income::text, dp.commission_base::text,
             dp.commission_rate::text, dp.commission_base_type,
             dp.vehicle_rental_fee::text,
@@ -1706,6 +1703,7 @@ router.get("/reports/export", async (req, res) => {
       "commission_rate",
       "commission_base_type",
       "company_commission",
+      "account_opening_fee",
       "raw_net_amount",
       "net_payout",
       "debt_amount",
@@ -1735,6 +1733,7 @@ router.get("/reports/export", async (req, res) => {
           r.commission_rate ?? "",
           r.commission_base_type ?? "",
           r.company_commission ?? "",
+          r.account_opening_fee ?? "",
           r.raw_net_amount ?? "",
           r.net_driver_payout ?? "",
           r.debt_amount ?? "",
