@@ -24,6 +24,11 @@ describe("netIncomeFromGrossAndTaxa", () => {
     expect(netIncomeFromGrossAndTaxa(100, null)).toBe(100);
     expect(netIncomeFromGrossAndTaxa(100, undefined)).toBe(100);
   });
+
+  it("always deducts fee magnitude from gross", () => {
+    expect(netIncomeFromGrossAndTaxa(100, 12)).toBe(88);
+    expect(netIncomeFromGrossAndTaxa(100, -12)).toBe(88);
+  });
 });
 
 describe("resolveFleetCommissionBase", () => {
@@ -122,6 +127,22 @@ describe("calculatePayout", () => {
     });
     expect(r.company_commission).toBeCloseTo(10, 5);
     expect(r.driver_payout).toBeCloseTo(-110, 5);
+  });
+
+  it("never produces negative company commission for negative net base", () => {
+    const r = calculatePayout({
+      income: 100,
+      tips: 0,
+      taxa_aplicatie: 130,
+      plata_zilnica_cash: 0,
+      transferTotal: null,
+      resolvedPlatformNet: null,
+      driver: driverPct10,
+      commission_base_type: "net_income",
+    });
+    expect(r.net_income).toBe(-30);
+    expect(r.company_commission).toBe(0);
+    expect(r.driver_payout).toBe(-30);
   });
 
   it("matches Excel-style row: net 13.09, 10% on net, daily cash -96.16", () => {

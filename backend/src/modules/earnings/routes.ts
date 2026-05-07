@@ -26,11 +26,7 @@ import { readOrgGlovoCommissionBase, writeOrgGlovoCommissionBase } from "./orgIm
 
 /** Platform net from row columns (matches netIncomeFromGrossAndTaxa in calculatePayout). Alias: er */
 const ER_NET_INCOME_SQL = `(
-  CASE
-    WHEN COALESCE(er.platform_fee, 0) < 0 THEN
-      COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) + COALESCE(er.platform_fee, 0)
-    ELSE COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) - COALESCE(er.platform_fee, 0)
-  END
+  COALESCE(er.gross_earnings, 0) + COALESCE(er.tips, 0) - ABS(COALESCE(er.platform_fee, 0))
 )`;
 
 const ER_DRIVER_PAYOUT_SQL = `ROUND((${ER_NET_INCOME_SQL})::numeric - COALESCE(er.company_commission, 0) - ABS(COALESCE(er.daily_cash, 0)), 2)`;
@@ -448,6 +444,7 @@ router.post("/import/commit", async (req, res) => {
       skippedNoMoney: commitResult.skippedNoMoney,
       totals: commitResult.totals,
       autoMatchedVehicleRentals: commitResult.autoMatchedVehicleRentals,
+      warnings: commitResult.warnings,
     });
   } catch (err) {
     try {
@@ -498,8 +495,10 @@ router.post("/sync-vehicles", async (req, res) => {
   const driverId =
     typeof body.driverId === "string" && UUID_RE.test(body.driverId) ? body.driverId : null;
 
+  const client = await pool.connect();
   try {
-    const touchResult = await pool.query(
+    await client.query("BEGIN");
+    const touchResult = await client.query(
       `UPDATE earnings_records er
        SET trip_date = er.trip_date
        FROM earnings_imports ei
@@ -508,11 +507,19 @@ router.post("/sync-vehicles", async (req, res) => {
          AND ($3::uuid IS NULL OR er.driver_id = $3::uuid)`,
       [orgId, importId, driverId],
     );
-    const refreshRes = await pool.query<{ n: string }>(
+    const refreshRes = await client.query<{ n: string }>(
       `SELECT refresh_driver_payout_vehicle_fees($1::uuid)::text AS n`,
       [orgId],
     );
     const updatedPayouts = parseInt(refreshRes.rows[0]?.n ?? "0", 10);
+    const driversRes = await client.query<{ driver_id: string }>(
+      `SELECT DISTINCT driver_id::text AS driver_id FROM driver_payouts WHERE organization_id = $1::uuid`,
+      [orgId],
+    );
+    for (const row of driversRes.rows) {
+      await recomputeDriverDebtAllocation(client, orgId, row.driver_id);
+    }
+    await client.query("COMMIT");
     return res.json({
       retouchedRecords: touchResult.rowCount ?? 0,
       updatedPayouts,
@@ -520,7 +527,14 @@ router.post("/sync-vehicles", async (req, res) => {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("Earnings sync-vehicles error", err);
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
     return res.status(500).json({ message: "Sync failed" });
+  } finally {
+    client.release();
   }
 });
 
@@ -825,6 +839,7 @@ type EarningsReportRow = {
   tips: string | null;
   total_platform_fees: string | null;
   total_daily_cash: string | null;
+  account_opening_fee: string | null;
   gross_income: string | null;
   net_income: string | null;
   company_commission: string | null;
@@ -854,7 +869,7 @@ async function fetchEarningsReportRows(
             dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
             dp.total_gross_earnings::text, dp.income::text, dp.tips::text,
-            dp.total_platform_fees::text, dp.total_daily_cash::text,
+            dp.total_platform_fees::text, dp.total_daily_cash::text, dp.account_opening_fee::text,
             dp.gross_income::text, dp.net_income::text,
             dp.company_commission::text,
             dp.commission_base::text, dp.commission_rate::text, dp.commission_base_type,
@@ -925,7 +940,7 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
             dp.net_driver_payout::text, dp.payment_status, dp.payment_date::text,
             dp.raw_net_amount::text, dp.debt_amount::text, dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.total_gross_earnings::text, dp.income::text, dp.tips::text, dp.total_platform_fees::text,
-            dp.total_daily_cash::text, dp.company_commission::text,
+            dp.total_daily_cash::text, dp.account_opening_fee::text, dp.company_commission::text,
             dp.gross_income::text, dp.net_income::text, dp.commission_base::text,
             dp.commission_rate::text, dp.commission_base_type,
             dp.vehicle_rental_fee::text,
@@ -1115,6 +1130,16 @@ router.get("/payouts/with-proration-details", async (req, res) => {
           vr.rental_start_date::text AS rental_start_date,
           vr.rental_end_date::text AS rental_end_date,
           vr.rental_type,
+          vr.status AS rental_status,
+          EXISTS (
+            SELECT 1
+            FROM vehicle_rentals vr2
+            WHERE vr2.organization_id = dp.organization_id
+              AND vr2.driver_id = dp.driver_id
+              AND vr2.status = 'active'
+              AND vr2.rental_end_date > dp.payment_period_end
+              AND vr2.rental_start_date <= dp.payment_period_end
+          ) AS has_unreturned_active_rental,
           NULL::text AS overlap_pct
         FROM driver_payouts dp
         INNER JOIN drivers d ON d.id = dp.driver_id
@@ -1706,6 +1731,7 @@ router.get("/reports/export", async (req, res) => {
       "commission_rate",
       "commission_base_type",
       "company_commission",
+      "account_opening_fee",
       "raw_net_amount",
       "net_payout",
       "debt_amount",
@@ -1735,6 +1761,7 @@ router.get("/reports/export", async (req, res) => {
           r.commission_rate ?? "",
           r.commission_base_type ?? "",
           r.company_commission ?? "",
+          r.account_opening_fee ?? "",
           r.raw_net_amount ?? "",
           r.net_driver_payout ?? "",
           r.debt_amount ?? "",

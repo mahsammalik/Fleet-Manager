@@ -86,8 +86,7 @@ function num(v: number | null | undefined): number {
  * Negative fee/rebate: net = gross + taxa. Non-negative: net = gross - taxa. Missing taxa → 0.
  */
 export function netIncomeFromGrossAndTaxa(gross: number, taxa_aplicatie: number | null | undefined): number {
-  const t = taxa_aplicatie ?? 0;
-  if (t < 0) return gross + t;
+  const t = Math.abs(taxa_aplicatie ?? 0);
   return gross - t;
 }
 

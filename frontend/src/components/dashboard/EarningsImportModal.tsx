@@ -68,6 +68,7 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [commitImportOpen, setCommitImportOpen] = useState(false);
+  const [commitWarnings, setCommitWarnings] = useState<string[]>([]);
 
   const { setClientDebtScan, runClientDebtScan, debtSummaryLine } = useCsvValidation(preview);
 
@@ -87,6 +88,7 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
       setLocalError(null);
       setClientDebtScan(null);
       setCommitImportOpen(false);
+      setCommitWarnings([]);
       return;
     }
     const { start, end } = weeklyDefaultRange();
@@ -129,14 +131,20 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
         weekStart: args.weekStart,
         weekEnd: args.weekEnd,
       }),
-    onSuccess: () => {
+    onSuccess: (resp) => {
       setCommitImportOpen(false);
       setPreview(null);
       setClientDebtScan(null);
       setLocalError(null);
-      onClose();
       void queryClient.invalidateQueries({ queryKey: ["earnings"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
+      const warnings = resp.data.warnings ?? [];
+      if (warnings.length > 0) {
+        setCommitWarnings(warnings);
+      } else {
+        setCommitWarnings([]);
+        onClose();
+      }
     },
     onError: (e) => setLocalError(errMessage(e)),
   });
@@ -221,6 +229,29 @@ export function EarningsImportModal({ open, onClose }: EarningsImportModalProps)
 
         {localError && (
           <div className="mb-3 rounded-lg bg-red-50 text-red-800 text-sm px-3 py-2">{localError}</div>
+        )}
+
+        {commitWarnings.length > 0 && (
+          <div className="mb-3 rounded-xl bg-amber-50 border border-amber-100 px-3 py-3">
+            <p className="text-xs font-semibold text-amber-900 mb-1">Vehicle return check</p>
+            <ul className="text-xs text-amber-900 list-disc list-inside space-y-0.5">
+              {commitWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setCommitWarnings([]);
+                  onClose();
+                }}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+              >
+                Acknowledge and close
+              </button>
+            </div>
+          </div>
         )}
 
         {preview && (

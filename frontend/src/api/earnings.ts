@@ -71,6 +71,7 @@ export interface PayoutListItem {
   tips: string | null;
   total_platform_fees: string | null;
   total_daily_cash: string | null;
+  account_opening_fee: string | null;
   /** Fleet commission (single: percent / fixed / hybrid of period net income). */
   company_commission: string | null;
   /** Glovo ladder: income + tips (period sum). */
@@ -107,6 +108,7 @@ export interface EarningsReportRow {
   tips: string | null;
   total_platform_fees: string | null;
   total_daily_cash: string | null;
+  account_opening_fee: string | null;
   gross_income: string | null;
   net_income: string | null;
   /** Fleet commission (single). */
@@ -163,6 +165,8 @@ export interface PayoutProrationDetail {
   rental_start_date: string | null;
   rental_end_date: string | null;
   rental_type: string | null;
+  rental_status: string | null;
+  has_unreturned_active_rental: boolean;
   overlap_pct: string | null;
 }
 
