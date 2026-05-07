@@ -69,6 +69,7 @@ export interface EarningsCommitResponse {
   skippedNoDate: number;
   skippedNoMoney: number;
   autoMatchedVehicleRentals?: number;
+  warnings?: string[];
   totals: {
     gross: number;
     fee: number;

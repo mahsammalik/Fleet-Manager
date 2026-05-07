@@ -165,6 +165,8 @@ export interface PayoutProrationDetail {
   rental_start_date: string | null;
   rental_end_date: string | null;
   rental_type: string | null;
+  rental_status: string | null;
+  has_unreturned_active_rental: boolean;
   overlap_pct: string | null;
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PayoutListItem } from "../api/earnings";
+import type { PayoutListItem, PayoutProrationDetail } from "../api/earnings";
 import { earningsPlatformLabel } from "../utils/earningsPlatformLabel";
 
 const DEFAULT_DEBOUNCE_MS = 300;
@@ -14,7 +14,12 @@ function payoutVehicleRentalLabel(row: PayoutListItem): string {
   return row.vehicle_rental_fee != null ? String(row.vehicle_rental_fee) : "";
 }
 
-function payoutMatchesQuery(row: PayoutListItem, query: string, statusFilter: string): boolean {
+function payoutMatchesQuery(
+  row: PayoutListItem,
+  query: string,
+  statusFilter: string,
+  detail: PayoutProrationDetail | undefined,
+): boolean {
   const q = query.trim().toLowerCase();
   if (statusFilter && row.payment_status !== statusFilter) return false;
   if (!q) return true;
@@ -31,11 +36,16 @@ function payoutMatchesQuery(row: PayoutListItem, query: string, statusFilter: st
     row.payment_status ?? "",
     payoutPeriodLabel(row),
     payoutVehicleRentalLabel(row),
+    detail?.has_unreturned_active_rental ? "vehicle not returned" : "",
   ];
   return haystacks.some((v) => String(v).toLowerCase().includes(q));
 }
 
-export function usePayoutSearch(rows: PayoutListItem[] | undefined, debounceMs: number = DEFAULT_DEBOUNCE_MS) {
+export function usePayoutSearch(
+  rows: PayoutListItem[] | undefined,
+  detailsByPayoutId?: Map<string, PayoutProrationDetail>,
+  debounceMs: number = DEFAULT_DEBOUNCE_MS,
+) {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -47,8 +57,10 @@ export function usePayoutSearch(rows: PayoutListItem[] | undefined, debounceMs: 
 
   const filteredRows = useMemo(() => {
     if (!rows?.length) return [];
-    return rows.filter((row) => payoutMatchesQuery(row, debouncedQuery, statusFilter));
-  }, [rows, debouncedQuery, statusFilter]);
+    return rows.filter((row) =>
+      payoutMatchesQuery(row, debouncedQuery, statusFilter, detailsByPayoutId?.get(row.id)),
+    );
+  }, [rows, debouncedQuery, statusFilter, detailsByPayoutId]);
 
   const totalCount = rows?.length ?? 0;
   const filteredCount = filteredRows.length;

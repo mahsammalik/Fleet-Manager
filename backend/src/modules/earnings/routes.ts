@@ -444,6 +444,7 @@ router.post("/import/commit", async (req, res) => {
       skippedNoMoney: commitResult.skippedNoMoney,
       totals: commitResult.totals,
       autoMatchedVehicleRentals: commitResult.autoMatchedVehicleRentals,
+      warnings: commitResult.warnings,
     });
   } catch (err) {
     try {
@@ -494,8 +495,10 @@ router.post("/sync-vehicles", async (req, res) => {
   const driverId =
     typeof body.driverId === "string" && UUID_RE.test(body.driverId) ? body.driverId : null;
 
+  const client = await pool.connect();
   try {
-    const touchResult = await pool.query(
+    await client.query("BEGIN");
+    const touchResult = await client.query(
       `UPDATE earnings_records er
        SET trip_date = er.trip_date
        FROM earnings_imports ei
@@ -504,11 +507,19 @@ router.post("/sync-vehicles", async (req, res) => {
          AND ($3::uuid IS NULL OR er.driver_id = $3::uuid)`,
       [orgId, importId, driverId],
     );
-    const refreshRes = await pool.query<{ n: string }>(
+    const refreshRes = await client.query<{ n: string }>(
       `SELECT refresh_driver_payout_vehicle_fees($1::uuid)::text AS n`,
       [orgId],
     );
     const updatedPayouts = parseInt(refreshRes.rows[0]?.n ?? "0", 10);
+    const driversRes = await client.query<{ driver_id: string }>(
+      `SELECT DISTINCT driver_id::text AS driver_id FROM driver_payouts WHERE organization_id = $1::uuid`,
+      [orgId],
+    );
+    for (const row of driversRes.rows) {
+      await recomputeDriverDebtAllocation(client, orgId, row.driver_id);
+    }
+    await client.query("COMMIT");
     return res.json({
       retouchedRecords: touchResult.rowCount ?? 0,
       updatedPayouts,
@@ -516,7 +527,14 @@ router.post("/sync-vehicles", async (req, res) => {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("Earnings sync-vehicles error", err);
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
     return res.status(500).json({ message: "Sync failed" });
+  } finally {
+    client.release();
   }
 });
 
@@ -1112,6 +1130,16 @@ router.get("/payouts/with-proration-details", async (req, res) => {
           vr.rental_start_date::text AS rental_start_date,
           vr.rental_end_date::text AS rental_end_date,
           vr.rental_type,
+          vr.status AS rental_status,
+          EXISTS (
+            SELECT 1
+            FROM vehicle_rentals vr2
+            WHERE vr2.organization_id = dp.organization_id
+              AND vr2.driver_id = dp.driver_id
+              AND vr2.status = 'active'
+              AND vr2.rental_end_date > dp.payment_period_end
+              AND vr2.rental_start_date <= dp.payment_period_end
+          ) AS has_unreturned_active_rental,
           NULL::text AS overlap_pct
         FROM driver_payouts dp
         INNER JOIN drivers d ON d.id = dp.driver_id

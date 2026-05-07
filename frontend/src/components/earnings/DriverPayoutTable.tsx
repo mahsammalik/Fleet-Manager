@@ -80,7 +80,8 @@ function payoutGlovoBreakdownTitle(row: PayoutListItem): string | undefined {
     `Commission (${pctLabel} nominal): ${formatCurrency(toNum(row.company_commission))}`,
     `Daily cash deduction: ${formatCurrency(Math.abs(toNum(row.total_daily_cash)))} (stored sum may be signed)`,
     `Account opening fee deduction: ${formatCurrency(Math.abs(toNum(row.account_opening_fee)))}`,
-    `Raw period roll-up: ${formatCurrency(toNum(row.raw_net_amount))}`,
+    `Vehicle rent (fleet week prorated): ${formatCurrency(toNum(row.vehicle_rental_fee))}`,
+    `Raw period roll-up (after opening fee and vehicle rent): ${formatCurrency(toNum(row.raw_net_amount))}`,
     `Net payable: ${formatCurrency(toNum(row.net_driver_payout))}`,
   ].join("\n");
 }
@@ -144,7 +145,7 @@ export function DriverPayoutTable({
     filteredCount,
     isFilterPending,
     clearSearch,
-  } = usePayoutSearch(rows);
+  } = usePayoutSearch(rows, detailsByPayoutId);
 
   const hasQuery = searchQuery.trim().length > 0 || statusFilter.length > 0;
   const isPayableRow = useCallback((r: PayoutListItem) => {
@@ -396,12 +397,22 @@ export function DriverPayoutTable({
                           </span>
                         </td>
                         <td className="px-3 py-3">
-                          <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                            <HighlightText
-                              text={toNum(row.vehicle_rental_fee) ? formatCurrency(toNum(row.vehicle_rental_fee)) : "—"}
-                              query={debouncedQuery}
-                            />
-                          </span>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                              <HighlightText
+                                text={toNum(row.vehicle_rental_fee) ? formatCurrency(toNum(row.vehicle_rental_fee)) : "—"}
+                                query={debouncedQuery}
+                              />
+                            </span>
+                            {detail?.has_unreturned_active_rental && (
+                              <span
+                                className="inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-400"
+                                title={`Active rental extends past ${row.payment_period_end?.slice(0, 10) ?? "week_end"} (status: ${detail.rental_status ?? "active"}). Confirm vehicle return.`}
+                              >
+                                Vehicle not returned?
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-wrap items-center gap-2">
@@ -652,6 +663,16 @@ export function DriverPayoutTable({
                       />
                     </span>
                   </p>
+                  {detail?.has_unreturned_active_rental && (
+                    <p className="mt-1">
+                      <span
+                        className="inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-400"
+                        title={`Active rental extends past ${row.payment_period_end?.slice(0, 10) ?? "week_end"} (status: ${detail.rental_status ?? "active"}). Confirm vehicle return.`}
+                      >
+                        Vehicle not returned?
+                      </span>
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {isPending && (
                       <button

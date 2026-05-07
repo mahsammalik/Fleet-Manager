@@ -1,4 +1,4 @@
--- After 046: expect no rows returned by mismatch checks.
+-- After 046 + 047: expect no rows returned by mismatch checks (uses calculate_rental_fee from 047).
 WITH expected AS (
   SELECT
     ei.organization_id,
@@ -8,7 +8,13 @@ WITH expected AS (
     ROUND(SUM(COALESCE(er.driver_payout, 0))::numeric, 2) AS expected_total_net_earnings,
     ROUND(SUM(ABS(COALESCE(er.account_opening_fee, 0)))::numeric, 6) AS expected_account_opening_fee,
     ROUND(SUM(COALESCE(er.driver_payout, 0))::numeric, 2)
-      - ROUND(SUM(ABS(COALESCE(er.account_opening_fee, 0)))::numeric, 2) AS expected_raw_net_amount
+      - ROUND(SUM(ABS(COALESCE(er.account_opening_fee, 0)))::numeric, 2)
+      - calculate_rental_fee(
+          ei.organization_id,
+          er.driver_id,
+          ei.week_start,
+          ei.week_end
+        ) AS expected_raw_net_amount
   FROM earnings_records er
   INNER JOIN earnings_imports ei ON ei.id = er.import_id
   GROUP BY ei.organization_id, er.driver_id, ei.week_start, ei.week_end

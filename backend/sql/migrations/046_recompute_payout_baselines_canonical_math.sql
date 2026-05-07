@@ -1,4 +1,6 @@
 -- Recompute driver_payouts baselines from earnings_records using canonical sign rules.
+-- raw_net_amount here omits vehicle rent; migration 047 (calculate_rental_fee + refresh) backfills
+-- vehicle_rental_fee and rent-aware raw_net_amount. Run 047 after 046 on fresh installs.
 BEGIN;
 
 WITH agg AS (
