@@ -232,6 +232,11 @@ export function getPayoutsWithProrationDetails(params: {
   );
 }
 
+export interface BulkUpdatePayoutsResponse {
+  updatedRows: number;
+  rentPaymentsRecorded?: number;
+}
+
 export function bulkUpdatePayouts(body: {
   ids: string[];
   paymentStatus?: string;
@@ -239,7 +244,7 @@ export function bulkUpdatePayouts(body: {
   paymentMethod?: string;
   transactionRef?: string;
 }) {
-  return api.patch<{ updatedRows: number }>("/earnings/payouts/bulk", body);
+  return api.patch<BulkUpdatePayoutsResponse>("/earnings/payouts/bulk", body);
 }
 
 export function downloadEarningsReportCsv(params: {

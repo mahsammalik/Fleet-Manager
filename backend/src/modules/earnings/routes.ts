@@ -1198,8 +1198,11 @@ router.patch("/payouts/bulk", async (req, res) => {
   const setPaidDate = paymentStatus === "paid";
   const blockPayableTransition = paymentStatus === "paid" || paymentStatus === "approved";
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const updateRes = await client.query<{ id: string }>(
       `UPDATE driver_payouts dp
        SET payment_status = $2::varchar(50),
            payment_date = CASE WHEN $7 THEN COALESCE($3::date, CURRENT_DATE) ELSE payment_date END,
@@ -1213,7 +1216,8 @@ router.patch("/payouts/bulk", async (req, res) => {
              dp.payment_status IS DISTINCT FROM 'debt'
              AND COALESCE(dp.remaining_debt_amount, 0) = 0
            )
-         )`,
+         )
+       RETURNING dp.id::text`,
       [
         orgId,
         paymentStatus,
@@ -1225,11 +1229,71 @@ router.patch("/payouts/bulk", async (req, res) => {
         blockPayableTransition,
       ],
     );
-    return res.json({ updatedRows: result.rowCount ?? 0 });
+
+    let rentPaymentsRecorded = 0;
+    if (paymentStatus === "paid" && updateRes.rows.length > 0) {
+      const paidIds = updateRes.rows.map((r) => r.id);
+      const insRes = await client.query<{ vehicle_rental_id: string; amount: string }>(
+        `WITH inserted AS (
+           INSERT INTO rent_payments
+             (organization_id, vehicle_rental_id, driver_payout_id, amount, payment_method, paid_at)
+           SELECT dp.organization_id, a.vehicle_rental_id, dp.id, a.amount,
+                  COALESCE($2, 'payroll_deduction'),
+                  COALESCE($3::timestamp, NOW())
+           FROM driver_payouts dp
+           CROSS JOIN LATERAL allocate_rental_fee(
+             dp.organization_id, dp.driver_id,
+             dp.payment_period_start, dp.payment_period_end
+           ) a
+           WHERE dp.id = ANY($1::uuid[])
+             AND COALESCE(dp.vehicle_rental_fee, 0) > 0
+             AND a.amount > 0
+           ON CONFLICT (driver_payout_id, vehicle_rental_id) DO NOTHING
+           RETURNING vehicle_rental_id, amount
+         )
+         SELECT vehicle_rental_id::text, amount::text FROM inserted`,
+        [paidIds, body.paymentMethod ?? null, paymentDate],
+      );
+
+      if (insRes.rows.length > 0) {
+        const totals = new Map<string, number>();
+        for (const r of insRes.rows) {
+          totals.set(r.vehicle_rental_id, (totals.get(r.vehicle_rental_id) ?? 0) + Number(r.amount));
+        }
+        const rentalIds = [...totals.keys()];
+        const amounts = rentalIds.map((id) => totals.get(id) ?? 0);
+        await client.query(
+          `UPDATE vehicle_rentals vr
+           SET rent_paid_amount = ROUND((vr.rent_paid_amount + agg.delta)::numeric, 2),
+               payment_status = CASE
+                 WHEN vr.total_rent_amount IS NULL OR vr.total_rent_amount = 0 THEN vr.payment_status
+                 WHEN (vr.rent_paid_amount + agg.delta) >= vr.total_rent_amount THEN 'paid'
+                 WHEN (vr.rent_paid_amount + agg.delta) > 0 THEN 'partial'
+                 ELSE vr.payment_status
+               END,
+               payment_date = COALESCE(vr.payment_date, CURRENT_DATE),
+               updated_at = NOW()
+           FROM UNNEST($1::uuid[], $2::numeric[]) AS agg(rental_id, delta)
+           WHERE vr.id = agg.rental_id`,
+          [rentalIds, amounts],
+        );
+        rentPaymentsRecorded = insRes.rows.length;
+      }
+    }
+
+    await client.query("COMMIT");
+    return res.json({ updatedRows: updateRes.rowCount ?? 0, rentPaymentsRecorded });
   } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
     // eslint-disable-next-line no-console
     console.error("Earnings payouts bulk update error", err);
     return res.status(500).json({ message: "Bulk update failed" });
+  } finally {
+    client.release();
   }
 });
 
