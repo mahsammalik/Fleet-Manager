@@ -6,6 +6,7 @@ import { query } from "../../db/pool";
 import type { EarningsStagingPayload } from "./normalizeRow";
 import { applyDebtCarryForward, roundMoney } from "./debtAllocation";
 import { calculatePayout, parseCommissionBaseType } from "./calculatePayout";
+import { syncPayoutRentEntries } from "./payoutRentEntries";
 
 export type EarningsCommitTotals = {
   gross: number;
@@ -366,6 +367,7 @@ export async function runEarningsCommitFromStaging(
     );
     const payoutId = upsertRes.rows[0]?.id;
     if (payoutId) {
+      await syncPayoutRentEntries(client, orgId, payoutId);
       await applyDebtCarryForward(client, orgId, payoutId);
     }
   }

@@ -317,10 +317,10 @@ export function VehicleDetailPage() {
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Driver</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Period</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Type</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Amount</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-700">Total Rent</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-700">Paid</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Deposit</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Deposit status</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Payment</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
                     {canEdit && <th className="px-3 py-2 text-left font-medium text-slate-700">Actions</th>}
                   </tr>
@@ -359,6 +359,20 @@ export function VehicleDetailPage() {
                         )}
                       </td>
                       <td className="px-3 py-2">
+                        {(() => {
+                          const paid = Number(r.rent_paid_amount ?? 0) || 0;
+                          const total = Number(r.total_rent_amount ?? 0) || 0;
+                          return (
+                            <div className="inline-flex items-center gap-1.5">
+                              <span>{formatCurrency(paid)}</span>
+                              {paid > 0 && total > 0 && paid < total && (
+                                <span className="text-xs text-amber-600">/ {formatCurrency(total)}</span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-3 py-2">
                         {r.deposit_amount ? formatCurrency(Number(r.deposit_amount)) : "—"}
                         {r.deposit_status === "partial" && r.deposit_deduction_amount && (
                           <div className="text-xs text-slate-500">
@@ -384,11 +398,13 @@ export function VehicleDetailPage() {
                         <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${PAYMENT_STATUS_COLORS[r.payment_status] ?? ""}`}>
                           {r.payment_status}
                         </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium capitalize ${RENTAL_STATUS_COLORS[r.status] ?? ""}`}>
-                          {r.status}
-                        </span>
+                        {r.status !== "completed" && (
+                          <div className="mt-1">
+                            <span className={`inline-flex rounded px-2 py-0.5 text-[10px] font-medium capitalize ${RENTAL_STATUS_COLORS[r.status] ?? ""}`}>
+                              rental: {r.status}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       {canEdit && (
                         <td className="px-3 py-2">

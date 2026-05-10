@@ -16,7 +16,8 @@ export type ActivityType =
   | "deposit_paid"
   | "deposit_refunded"
   | "deposit_deducted"
-  | "rental_auto_extended";
+  | "rental_auto_extended"
+  | "vehicle_rental_roll_forward";
 
 export async function logDriverActivity(
   driverId: string,

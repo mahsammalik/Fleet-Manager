@@ -70,11 +70,16 @@ export function OverdueRentalsPage() {
   const bulkCompleteMutation = useMutation({
     mutationFn: ({ rentalIds, completionDate }: { rentalIds: string[]; completionDate: string }) =>
       bulkCompleteOverdueRentals(rentalIds, completionDate),
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ["overdueRentals"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard", "stats"] });
       queryClient.invalidateQueries({ queryKey: ["vehicles"] });
       queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      const msg = response.data.rentPaymentsRecorded;
+      if (typeof msg === "number" && msg > 0) {
+        // Placeholder for future toast integration; keeps additive response field consumed.
+        console.info(`Recorded ${msg} rent payment entries.`);
+      }
       setSelectedIds([]);
       setCompleteTarget(null);
     },

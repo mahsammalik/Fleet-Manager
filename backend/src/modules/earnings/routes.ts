@@ -832,6 +832,7 @@ type EarningsReportRow = {
   debt_applied_amount: string | null;
   remaining_debt_amount: string | null;
   vehicle_rental_fee: string | null;
+  rent_entries: unknown;
   payment_status: string;
   payment_date: string | null;
   total_gross_earnings: string | null;
@@ -867,7 +868,22 @@ async function fetchEarningsReportRows(
             TO_CHAR(dp.payment_period_end, 'YYYY-MM-DD') AS period_end_label,
             dp.net_driver_payout::text, dp.raw_net_amount::text, dp.debt_amount::text,
             dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
-            dp.vehicle_rental_fee::text, dp.payment_status, dp.payment_date::text,
+            dp.vehicle_rental_fee::text,
+            COALESCE(
+              (SELECT json_agg(
+                  json_build_object(
+                    'id', pe.id::text,
+                    'vehicle_rental_id', pe.vehicle_rental_id::text,
+                    'entry_type', pe.entry_type,
+                    'amount', pe.amount::text,
+                    'description', pe.description
+                  ) ORDER BY pe.entry_type, pe.created_at
+               )
+               FROM payout_rent_entries pe
+               WHERE pe.driver_payout_id = dp.id),
+              '[]'::json
+            ) AS rent_entries,
+            dp.payment_status, dp.payment_date::text,
             dp.total_gross_earnings::text, dp.income::text, dp.tips::text,
             dp.total_platform_fees::text, dp.total_daily_cash::text, dp.account_opening_fee::text,
             dp.gross_income::text, dp.net_income::text,
@@ -944,6 +960,20 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
             dp.gross_income::text, dp.net_income::text, dp.commission_base::text,
             dp.commission_rate::text, dp.commission_base_type,
             dp.vehicle_rental_fee::text,
+            COALESCE(
+              (SELECT json_agg(
+                  json_build_object(
+                    'id', pe.id::text,
+                    'vehicle_rental_id', pe.vehicle_rental_id::text,
+                    'entry_type', pe.entry_type,
+                    'amount', pe.amount::text,
+                    'description', pe.description
+                  ) ORDER BY pe.entry_type, pe.created_at
+               )
+               FROM payout_rent_entries pe
+               WHERE pe.driver_payout_id = dp.id),
+              '[]'::json
+            ) AS rent_entries,
             d.first_name, d.last_name, d.phone,
             CONCAT(d.first_name, ' ', d.last_name) AS driver_name,
             TO_CHAR(dp.payment_period_start, 'YYYY-MM-DD') AS period_start_label,
@@ -1237,6 +1267,26 @@ router.patch("/payouts/bulk", async (req, res) => {
         `WITH inserted AS (
            INSERT INTO rent_payments
              (organization_id, vehicle_rental_id, driver_payout_id, amount, payment_method, paid_at)
+           SELECT dp.organization_id, s.vehicle_rental_id, dp.id, s.amount,
+                  COALESCE($2, 'payroll_deduction'),
+                  COALESCE($3::timestamp, NOW())
+           FROM driver_payouts dp
+           INNER JOIN (
+             SELECT pe.driver_payout_id AS payout_id, pe.vehicle_rental_id, SUM(pe.amount)::numeric AS amount
+             FROM payout_rent_entries pe
+             WHERE pe.driver_payout_id = ANY($1::uuid[])
+               AND pe.entry_type IN ('current_week', 'overdue')
+             GROUP BY pe.driver_payout_id, pe.vehicle_rental_id
+             HAVING SUM(pe.amount) > 0
+           ) s ON s.payout_id = dp.id
+           WHERE dp.id = ANY($1::uuid[])
+             AND COALESCE(dp.vehicle_rental_fee, 0) > 0
+           ON CONFLICT (driver_payout_id, vehicle_rental_id) DO NOTHING
+           RETURNING vehicle_rental_id, amount
+         ),
+         inserted_fallback AS (
+           INSERT INTO rent_payments
+             (organization_id, vehicle_rental_id, driver_payout_id, amount, payment_method, paid_at)
            SELECT dp.organization_id, a.vehicle_rental_id, dp.id, a.amount,
                   COALESCE($2, 'payroll_deduction'),
                   COALESCE($3::timestamp, NOW())
@@ -1248,10 +1298,17 @@ router.patch("/payouts/bulk", async (req, res) => {
            WHERE dp.id = ANY($1::uuid[])
              AND COALESCE(dp.vehicle_rental_fee, 0) > 0
              AND a.amount > 0
+             AND NOT EXISTS (
+               SELECT 1 FROM payout_rent_entries pe
+               WHERE pe.driver_payout_id = dp.id
+                 AND pe.entry_type IN ('current_week', 'overdue')
+             )
            ON CONFLICT (driver_payout_id, vehicle_rental_id) DO NOTHING
            RETURNING vehicle_rental_id, amount
          )
-         SELECT vehicle_rental_id::text, amount::text FROM inserted`,
+         SELECT vehicle_rental_id::text, amount::text FROM inserted
+         UNION ALL
+         SELECT vehicle_rental_id::text, amount::text FROM inserted_fallback`,
         [paidIds, body.paymentMethod ?? null, paymentDate],
       );
 

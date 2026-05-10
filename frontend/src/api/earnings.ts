@@ -45,6 +45,15 @@ export interface EarningsImportsResponse {
   total: number;
 }
 
+/** Payroll vehicle rent line items (synced on weekly earnings commit). */
+export interface PayoutRentEntry {
+  id: string;
+  vehicle_rental_id: string | null;
+  entry_type: "current_week" | "overdue" | "adjustment";
+  amount: string;
+  description: string | null;
+}
+
 export interface PayoutListItem {
   id: string;
   driver_id: string;
@@ -62,6 +71,7 @@ export interface PayoutListItem {
   debt_applied_amount: string | null;
   remaining_debt_amount: string | null;
   vehicle_rental_fee: string | null;
+  rent_entries?: PayoutRentEntry[] | null;
   payment_status: string;
   payment_date: string | null;
   total_gross_earnings: string | null;
@@ -117,6 +127,7 @@ export interface EarningsReportRow {
   commission_rate: string | null;
   commission_base_type: string | null;
   vehicle_rental_fee: string | null;
+  rent_entries?: PayoutRentEntry[] | null;
   net_driver_payout: string | null;
   raw_net_amount: string | null;
   debt_amount: string | null;

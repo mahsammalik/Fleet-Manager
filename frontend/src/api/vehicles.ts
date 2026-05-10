@@ -69,6 +69,7 @@ export interface VehicleRental {
   rental_end_date: string;
   rental_type: RentalType;
   total_rent_amount: string | null;
+  rent_paid_amount: string;
   deposit_amount: string;
   deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
   deposit_paid_at: string | null;
