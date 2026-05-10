@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import type { PayoutListItem, PayoutProrationDetail } from "../../api/earnings";
+import type { PayoutListItem, PayoutProrationDetail, PayoutRentEntry } from "../../api/earnings";
 import { usePayoutSearch } from "../../hooks/usePayoutSearch";
 import { ConfirmDialog } from "../UI/ConfirmDialog";
 import { formatCurrency } from "../../utils/currency";
@@ -43,6 +43,30 @@ function toNum(value: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function normalizeRentEntries(raw: PayoutListItem["rent_entries"]): PayoutRentEntry[] {
+  if (raw == null || !Array.isArray(raw)) return [];
+  return raw.filter(
+    (x): x is PayoutRentEntry =>
+      typeof x === "object" &&
+      x != null &&
+      typeof (x as PayoutRentEntry).entry_type === "string" &&
+      typeof (x as PayoutRentEntry).amount === "string",
+  );
+}
+
+function rentEntryTypeLabel(t: string): string {
+  switch (t) {
+    case "current_week":
+      return "This week";
+    case "overdue":
+      return "Overdue (prior week)";
+    case "adjustment":
+      return "Adjustment";
+    default:
+      return t;
+  }
+}
+
 function formatRatePctFromFraction(rNum: number): string {
   if (!(rNum > 0)) return "—";
   if (rNum <= 1) return `${(rNum * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
@@ -83,6 +107,21 @@ function payoutGlovoBreakdownTitle(row: PayoutListItem): string | undefined {
     `Vehicle rent (fleet week prorated): ${formatCurrency(toNum(row.vehicle_rental_fee))}`,
     `Raw period roll-up (after opening fee and vehicle rent): ${formatCurrency(toNum(row.raw_net_amount))}`,
     `Net payable: ${formatCurrency(toNum(row.net_driver_payout))}`,
+  ].join("\n");
+}
+
+/** Tooltip for vehicle rent column (line items when present). */
+function vehicleRentDetailTitle(row: PayoutListItem): string | undefined {
+  const entries = normalizeRentEntries(row.rent_entries);
+  const total = toNum(row.vehicle_rental_fee);
+  if (!entries.length && total === 0) return undefined;
+  if (!entries.length) return `Vehicle rent: ${formatCurrency(total)}`;
+  return [
+    `Vehicle rent total: ${formatCurrency(total)}`,
+    ...entries.map((e) => {
+      const desc = e.description ? ` — ${e.description}` : "";
+      return `• ${rentEntryTypeLabel(e.entry_type)}: ${formatCurrency(Number(e.amount) || 0)}${desc}`;
+    }),
   ].join("\n");
 }
 
@@ -398,7 +437,10 @@ export function DriverPayoutTable({
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-wrap items-center gap-1">
-                            <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                            <span
+                              className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800"
+                              title={vehicleRentDetailTitle(row)}
+                            >
                               <HighlightText
                                 text={toNum(row.vehicle_rental_fee) ? formatCurrency(toNum(row.vehicle_rental_fee)) : "—"}
                                 query={debouncedQuery}
@@ -533,6 +575,18 @@ export function DriverPayoutTable({
                                 <p className="text-amber-800">
                                   Vehicle rental: {formatCurrency(toNum(row.vehicle_rental_fee))}
                                 </p>
+                                {normalizeRentEntries(row.rent_entries).length > 0 && (
+                                  <ul className="mt-1 list-inside list-disc text-amber-900/90">
+                                    {normalizeRentEntries(row.rent_entries).map((e) => (
+                                      <li key={e.id}>
+                                        {rentEntryTypeLabel(e.entry_type)}: {formatCurrency(Number(e.amount) || 0)}
+                                        {e.description ? (
+                                          <span className="text-slate-600"> — {e.description}</span>
+                                        ) : null}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
                                 <p className="mt-1 font-semibold text-slate-900">
                                   Net payout: {formatCurrency(toNum(row.net_driver_payout))}
                                 </p>
@@ -654,7 +708,13 @@ export function DriverPayoutTable({
                       Previous debt applied: {formatCurrency(toNum(row.debt_applied_amount))}
                     </p>
                   )}
-                  <p className="mt-2 text-xs text-slate-600">
+                  <p
+                    className="mt-2 text-xs text-slate-600"
+                    title={
+                      [payoutGlovoBreakdownTitle(row), vehicleRentDetailTitle(row)].filter(Boolean).join("\n\n") ||
+                      undefined
+                    }
+                  >
                     <HighlightText text={periodLabel(row)} query={debouncedQuery} /> | Vehicle:{" "}
                     <span className="font-semibold text-amber-800">
                       <HighlightText
@@ -763,6 +823,18 @@ export function DriverPayoutTable({
                         Remaining debt: {formatCurrency(toNum(row.remaining_debt_amount))}
                       </p>
                       <p className="text-amber-800">Vehicle rental: {formatCurrency(toNum(row.vehicle_rental_fee))}</p>
+                      {normalizeRentEntries(row.rent_entries).length > 0 && (
+                        <ul className="mt-1 list-inside list-disc text-amber-900/90">
+                          {normalizeRentEntries(row.rent_entries).map((e) => (
+                            <li key={e.id}>
+                              {rentEntryTypeLabel(e.entry_type)}: {formatCurrency(Number(e.amount) || 0)}
+                              {e.description ? (
+                                <span className="text-slate-600"> — {e.description}</span>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       <p className="mt-1 font-semibold text-slate-900">
                         Net payout: {formatCurrency(toNum(row.net_driver_payout))}
                       </p>

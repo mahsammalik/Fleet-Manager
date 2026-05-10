@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { EarningsReportRow } from "../../api/earnings";
+import type { EarningsReportRow, PayoutRentEntry } from "../../api/earnings";
 import { formatCurrency } from "../../utils/currency";
 import { commissionBaseTypeLabel } from "../../utils/commissionBaseLabels";
 
@@ -27,6 +27,44 @@ function asNumber(v: string | null): number {
   if (v == null || v === "") return 0;
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeReportRentEntries(raw: EarningsReportRow["rent_entries"]): PayoutRentEntry[] {
+  if (raw == null || !Array.isArray(raw)) return [];
+  return raw.filter(
+    (x): x is PayoutRentEntry =>
+      typeof x === "object" &&
+      x != null &&
+      typeof (x as PayoutRentEntry).entry_type === "string" &&
+      typeof (x as PayoutRentEntry).amount === "string",
+  );
+}
+
+function rentEntryTypeLabel(t: string): string {
+  switch (t) {
+    case "current_week":
+      return "This week";
+    case "overdue":
+      return "Overdue (prior week)";
+    case "adjustment":
+      return "Adjustment";
+    default:
+      return t;
+  }
+}
+
+function vehicleRentReportTitle(row: EarningsReportRow): string | undefined {
+  const entries = normalizeReportRentEntries(row.rent_entries);
+  const total = asNumber(row.vehicle_rental_fee);
+  if (!entries.length && total === 0) return undefined;
+  if (!entries.length) return `Vehicle rent: ${formatCurrency(total)}`;
+  return [
+    `Vehicle rent total: ${formatCurrency(total)}`,
+    ...entries.map((e) => {
+      const desc = e.description ? ` — ${e.description}` : "";
+      return `• ${rentEntryTypeLabel(e.entry_type)}: ${formatCurrency(Number(e.amount) || 0)}${desc}`;
+    }),
+  ].join("\n");
 }
 
 function statusClass(status: string) {
@@ -256,7 +294,7 @@ export function EarningsReportsPreviewTable({
                     <td className="px-3 py-2 text-[11px] leading-snug text-slate-600 max-w-[140px]">
                       {commissionBaseTypeLabel(row.commission_base_type)}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
+                    <td className="px-3 py-2 text-right tabular-nums" title={vehicleRentReportTitle(row)}>
                       {formatCurrency(asNumber(row.vehicle_rental_fee))}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold">
