@@ -3,7 +3,17 @@ import type { EarningsReportRow, PayoutRentEntry } from "../../api/earnings";
 import { formatCurrency } from "../../utils/currency";
 import { commissionBaseTypeLabel } from "../../utils/commissionBaseLabels";
 
-type SortKey = "driver" | "period" | "revenue" | "commission" | "rental" | "payout" | "debt" | "status";
+type SortKey =
+  | "driver"
+  | "period"
+  | "revenue"
+  | "platformFees"
+  | "dailyCash"
+  | "commission"
+  | "rental"
+  | "payout"
+  | "debt"
+  | "status";
 
 type SortState = {
   key: SortKey;
@@ -124,6 +134,10 @@ export function EarningsReportsPreviewTable({
         return a.payment_period_start.localeCompare(b.payment_period_start) * dir;
       if (sort.key === "revenue")
         return (asNumber(a.total_gross_earnings) - asNumber(b.total_gross_earnings)) * dir;
+      if (sort.key === "platformFees")
+        return (asNumber(a.total_platform_fees) - asNumber(b.total_platform_fees)) * dir;
+      if (sort.key === "dailyCash")
+        return (Math.abs(asNumber(a.total_daily_cash)) - Math.abs(asNumber(b.total_daily_cash))) * dir;
       if (sort.key === "commission")
         return (asNumber(a.company_commission) - asNumber(b.company_commission)) * dir;
       if (sort.key === "rental")
@@ -184,7 +198,7 @@ export function EarningsReportsPreviewTable({
 
       <div className={`${mobileOpen ? "block" : "hidden"} overflow-x-auto rounded-xl border border-slate-200/80 bg-white/50 md:block`}>
         <div className={scrollShellClass}>
-          <table className="min-w-[1680px] w-full border-collapse text-left text-xs">
+          <table className="min-w-[1880px] w-full border-collapse text-left text-xs">
             <thead className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50/95 text-slate-600 shadow-[0_1px_0_rgb(226_232_240)]">
               <tr>
                 <th className="px-3 py-2.5">
@@ -202,6 +216,26 @@ export function EarningsReportsPreviewTable({
                 <th className="px-3 py-2.5 text-right">
                   <button type="button" className="font-medium hover:text-slate-900" onClick={() => toggleSort("revenue")}>
                     Total gross{sortLabel("revenue")}
+                  </button>
+                </th>
+                <th
+                  className="px-3 py-2.5 text-right"
+                  title="Platform fees (taxa aplicatie / platform charge) for the period"
+                >
+                  <button
+                    type="button"
+                    className="font-medium hover:text-slate-900"
+                    onClick={() => toggleSort("platformFees")}
+                  >
+                    Platform fees{sortLabel("platformFees")}
+                  </button>
+                </th>
+                <th
+                  className="px-3 py-2.5 text-right"
+                  title="Daily cash advance (plata zilnica cash). Shown as deduction magnitude; stored total may be signed."
+                >
+                  <button type="button" className="font-medium hover:text-slate-900" onClick={() => toggleSort("dailyCash")}>
+                    Daily cash{sortLabel("dailyCash")}
                   </button>
                 </th>
                 <th className="px-3 py-2.5 text-right">
@@ -250,13 +284,13 @@ export function EarningsReportsPreviewTable({
             <tbody className="divide-y divide-slate-100 text-slate-800">
               {loading ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={16} className="px-3 py-10 text-center text-sm text-slate-500">
                     Loading live preview...
                   </td>
                 </tr>
               ) : visibleRows.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={16} className="px-3 py-10 text-center text-sm text-slate-500">
                     No rows match the current filters.
                   </td>
                 </tr>
@@ -274,6 +308,18 @@ export function EarningsReportsPreviewTable({
                     <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(asNumber(row.tips))}</td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {formatCurrency(asNumber(row.total_gross_earnings))}
+                    </td>
+                    <td
+                      className="px-3 py-2 text-right tabular-nums text-slate-700"
+                      title="Platform fees (taxa aplicatie / platform charge)"
+                    >
+                      {formatCurrency(asNumber(row.total_platform_fees))}
+                    </td>
+                    <td
+                      className="px-3 py-2 text-right tabular-nums text-slate-700"
+                      title="Daily cash deduction magnitude (stored sum may be signed)"
+                    >
+                      {formatCurrency(Math.abs(asNumber(row.total_daily_cash)))}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {formatCurrency(asNumber(row.company_commission))}
