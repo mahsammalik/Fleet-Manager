@@ -113,6 +113,8 @@ export function EarningsReportsPage() {
           platform_id: r.platform_id ?? "",
           period: `${r.period_start_label} - ${r.period_end_label}`,
           total_revenue: r.total_gross_earnings ?? "",
+          total_platform_fees: r.total_platform_fees ?? "",
+          total_daily_cash: r.total_daily_cash ?? "",
           raw_net_amount: r.raw_net_amount ?? "",
           vehicle_rental: r.vehicle_rental_fee ?? "",
           net_payout: r.net_driver_payout ?? "",
