@@ -1,8 +1,6 @@
 import { api } from "../lib/api";
 
 export type VehicleStatus = "available" | "rented" | "maintenance" | "sold" | "scrapped";
-export type RentalType = "daily" | "weekly" | "monthly";
-export type RentalStatus = "active" | "completed" | "cancelled" | "overdue";
 export type PaymentStatus = "pending" | "paid" | "partial" | "overdue";
 export type MaintenanceStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -58,65 +56,6 @@ export interface CreateVehiclePayload {
 
 export interface UpdateVehiclePayload extends Partial<CreateVehiclePayload> {
   currentDriverId?: string | null;
-}
-
-export interface VehicleRental {
-  id: string;
-  vehicle_id: string;
-  driver_id: string;
-  organization_id: string;
-  rental_start_date: string;
-  rental_end_date: string;
-  rental_type: RentalType;
-  total_rent_amount: string | null;
-  rent_paid_amount: string;
-  deposit_amount: string;
-  deposit_status: "pending" | "paid" | "refunded" | "partial" | null;
-  deposit_paid_at: string | null;
-  deposit_refunded_at: string | null;
-  deposit_deduction_amount: string | null;
-  deposit_deduction_reason: string | null;
-  payment_status: PaymentStatus;
-  payment_date: string | null;
-  payment_method: string | null;
-  payment_reference: string | null;
-  status: RentalStatus;
-  notes: string | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-  driver_first_name?: string;
-  driver_last_name?: string;
-}
-
-export interface CreateRentalPayload {
-  driverId: string;
-  rentalStartDate: string;
-  rentalEndDate: string;
-  rentalType?: RentalType;
-  totalRentAmount?: number;
-  depositAmount?: number;
-  paymentStatus?: PaymentStatus;
-  paymentDate?: string;
-  paymentMethod?: string;
-  paymentReference?: string;
-  status?: RentalStatus;
-  notes?: string;
-}
-
-export interface UpdateRentalPayload {
-  status?: RentalStatus;
-  /** YYYY-MM-DD; used when completing a rental */
-  completionDate?: string;
-  paymentStatus?: PaymentStatus;
-  paymentDate?: string;
-  paymentMethod?: string;
-  paymentReference?: string;
-  depositStatus?: "pending" | "paid" | "refunded" | "partial";
-  depositPaidAt?: string;
-  depositRefundedAt?: string;
-  depositDeductionAmount?: number;
-  depositDeductionReason?: string;
 }
 
 export interface VehicleMaintenance {
@@ -188,55 +127,6 @@ export function updateVehicle(id: string, data: UpdateVehiclePayload) {
 
 export function deleteVehicle(id: string) {
   return api.delete<{ id: string }>(`/vehicles/${id}`);
-}
-
-export function getVehicleRentals(vehicleId: string) {
-  return api.get<VehicleRental[]>(`/vehicles/${vehicleId}/rentals`);
-}
-
-export function createVehicleRental(vehicleId: string, data: CreateRentalPayload) {
-  return api.post<VehicleRental>(`/vehicles/${vehicleId}/rentals`, data);
-}
-
-export function updateVehicleRental(vehicleId: string, rentalId: string, data: UpdateRentalPayload) {
-  return api.patch<VehicleRental>(`/vehicles/${vehicleId}/rentals/${rentalId}`, data);
-}
-
-export function markDepositPaid(
-  vehicleId: string,
-  rentalId: string,
-  data: { paymentMethod?: string; paymentReference?: string } = {},
-) {
-  return updateVehicleRental(vehicleId, rentalId, {
-    depositStatus: "paid",
-    paymentMethod: data.paymentMethod,
-    paymentReference: data.paymentReference,
-  });
-}
-
-export function refundDeposit(
-  vehicleId: string,
-  rentalId: string,
-  data: { paymentMethod?: string; paymentReference?: string } = {},
-) {
-  return updateVehicleRental(vehicleId, rentalId, {
-    depositStatus: "refunded",
-    paymentMethod: data.paymentMethod,
-    paymentReference: data.paymentReference,
-  });
-}
-
-export function deductFromDeposit(
-  vehicleId: string,
-  rentalId: string,
-  data: { amount: number; reason: string; paymentMethod?: string } ,
-) {
-  return updateVehicleRental(vehicleId, rentalId, {
-    depositStatus: "partial",
-    depositDeductionAmount: data.amount,
-    depositDeductionReason: data.reason,
-    paymentMethod: data.paymentMethod,
-  });
 }
 
 export function getVehicleMaintenance(vehicleId: string) {

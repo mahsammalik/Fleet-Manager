@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PayoutListItem, PayoutProrationDetail } from "../api/earnings";
+import type { PayoutListItem, PayoutAssignmentDetail } from "../api/earnings";
 import { earningsPlatformLabel } from "../utils/earningsPlatformLabel";
 
 const DEFAULT_DEBOUNCE_MS = 300;
@@ -18,7 +18,7 @@ function payoutMatchesQuery(
   row: PayoutListItem,
   query: string,
   statusFilter: string,
-  detail: PayoutProrationDetail | undefined,
+  detail: PayoutAssignmentDetail | undefined,
 ): boolean {
   const q = query.trim().toLowerCase();
   if (statusFilter && row.payment_status !== statusFilter) return false;
@@ -36,14 +36,14 @@ function payoutMatchesQuery(
     row.payment_status ?? "",
     payoutPeriodLabel(row),
     payoutVehicleRentalLabel(row),
-    detail?.has_unreturned_active_rental ? "vehicle not returned" : "",
+    detail?.license_plate ?? "",
   ];
   return haystacks.some((v) => String(v).toLowerCase().includes(q));
 }
 
 export function usePayoutSearch(
   rows: PayoutListItem[] | undefined,
-  detailsByPayoutId?: Map<string, PayoutProrationDetail>,
+  detailsByPayoutId?: Map<string, PayoutAssignmentDetail>,
   debounceMs: number = DEFAULT_DEBOUNCE_MS,
 ) {
   const [searchQuery, setSearchQuery] = useState("");

@@ -338,7 +338,9 @@ export function EditVehiclePage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Weekly rent</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1" title="Deducted from each weekly driver payout while this vehicle is assigned to the driver.">
+                  Weekly rent (payroll deduction)
+                </label>
                 <input
                   type="number"
                   min={0}

@@ -14,8 +14,6 @@ import { AddVehiclePage } from "./pages/vehicles/AddVehiclePage";
 import { EditVehiclePage } from "./pages/vehicles/EditVehiclePage";
 import { VehicleDetailPage } from "./pages/vehicles/VehicleDetailPage";
 import { VehicleDocumentsPage } from "./pages/vehicles/VehicleDocumentsPage";
-import { OverdueRentalsPage } from "./pages/rentals/OverdueRentalsPage";
-import { VehicleRentalsPage } from "./pages/rentals/VehicleRentalsPage";
 import { EarningsOverviewPage } from "./pages/earnings/EarningsOverviewPage";
 import { EarningsImportPage } from "./pages/earnings/EarningsImportPage";
 import { EarningsPayoutsPage } from "./pages/earnings/EarningsPayoutsPage";
@@ -99,22 +97,6 @@ export const appRouter = createBrowserRouter(
       element: (
         <ProtectedRoute>
           <EditVehiclePage />
-        </ProtectedRoute>
-      ),
-    },
-    {
-      path: "/rentals/active",
-      element: (
-        <ProtectedRoute>
-          <VehicleRentalsPage />
-        </ProtectedRoute>
-      ),
-    },
-    {
-      path: "/rentals/overdue",
-      element: (
-        <ProtectedRoute>
-          <OverdueRentalsPage />
         </ProtectedRoute>
       ),
     },

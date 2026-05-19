@@ -171,19 +171,18 @@ export interface CommissionByBaseTypeRow {
   avgCommissionRate: number;
 }
 
-export interface PayoutProrationDetail {
+export interface PayoutAssignmentDetail {
   payout_id: string;
+  driver_id: string;
   vehicle_rental_fee: string | null;
   remaining_debt_amount?: string | null;
-  vehicle_rental_id: string | null;
-  rental_amount: string | null;
-  rental_start_date: string | null;
-  rental_end_date: string | null;
-  rental_type: string | null;
-  rental_status: string | null;
-  has_unreturned_active_rental: boolean;
-  overlap_pct: string | null;
+  has_vehicle_assigned: boolean;
+  license_plate: string | null;
+  weekly_rent: string | null;
 }
+
+/** @deprecated Use PayoutAssignmentDetail */
+export type PayoutProrationDetail = PayoutAssignmentDetail;
 
 export function getEarningsOverview() {
   return api.get<EarningsOverviewResponse>("/earnings/overview");
@@ -233,7 +232,7 @@ export function getCommissionByBaseTypeReport(params: {
   return api.get<{ items: CommissionByBaseTypeRow[] }>("/earnings/reports/commission-by-base-type", { params });
 }
 
-export function getPayoutsWithProrationDetails(params: {
+export function getPayoutsAssignmentDetails(params: {
   page?: number;
   pageSize?: number;
   status?: string;
@@ -243,15 +242,17 @@ export function getPayoutsWithProrationDetails(params: {
   driverId?: string;
   excludeSubcontractorManaged?: boolean;
 }) {
-  return api.get<{ items: PayoutProrationDetail[]; page: number; pageSize: number }>(
-    "/earnings/payouts/with-proration-details",
+  return api.get<{ items: PayoutAssignmentDetail[]; page: number; pageSize: number }>(
+    "/earnings/payouts/assignment-details",
     { params },
   );
 }
 
+/** @deprecated Use getPayoutsAssignmentDetails */
+export const getPayoutsWithProrationDetails = getPayoutsAssignmentDetails;
+
 export interface BulkUpdatePayoutsResponse {
   updatedRows: number;
-  rentPaymentsRecorded?: number;
 }
 
 export function bulkUpdatePayouts(body: {

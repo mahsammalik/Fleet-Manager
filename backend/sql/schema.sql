@@ -214,8 +214,6 @@ CREATE TABLE IF NOT EXISTS earnings_records (
         )
       ) STORED,
     commission_type VARCHAR(50),
-    vehicle_rental_id UUID,
-    vehicle_rental_fee DECIMAL(10, 2),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -248,7 +246,6 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     debt_applied_amount DECIMAL(12, 2) DEFAULT 0,
     remaining_debt_amount DECIMAL(12, 2) DEFAULT 0,
     net_driver_payout DECIMAL(10, 2),
-    vehicle_rental_id UUID,
     vehicle_rental_fee DECIMAL(12, 2) DEFAULT 0,
     payment_status VARCHAR(50) DEFAULT 'pending' CHECK (payment_status IN ('pending', 'processing', 'approved', 'paid', 'failed', 'hold', 'debt')),
     payment_date DATE,
@@ -319,8 +316,6 @@ CREATE INDEX IF NOT EXISTS idx_earnings_staging_org ON earnings_import_staging(o
 CREATE INDEX IF NOT EXISTS idx_earnings_records_driver ON earnings_records(driver_id);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_date ON earnings_records(trip_date);
 CREATE INDEX IF NOT EXISTS idx_earnings_records_import ON earnings_records(import_id);
-CREATE INDEX IF NOT EXISTS idx_earnings_records_vehicle_rental ON earnings_records(vehicle_rental_id)
-    WHERE vehicle_rental_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_driver_payouts_driver ON driver_payouts(driver_id);
 CREATE INDEX IF NOT EXISTS idx_driver_payouts_platform_id ON driver_payouts(platform_id);
 CREATE INDEX IF NOT EXISTS idx_driver_payouts_status ON driver_payouts(payment_status);
@@ -381,6 +376,29 @@ ALTER TABLE drivers
   ADD COLUMN IF NOT EXISTS current_vehicle_id UUID REFERENCES vehicles(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_drivers_current_vehicle ON drivers(current_vehicle_id);
 
+-- Audit-only driver–vehicle assignment log (payroll uses drivers.current_vehicle_id only).
+CREATE TABLE IF NOT EXISTS vehicle_assignment_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    driver_id UUID NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+    vehicle_id UUID NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    unassigned_at TIMESTAMPTZ,
+    weekly_rent_at_time NUMERIC(12, 2) NOT NULL,
+    assigned_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    unassigned_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_vehicle_assignment_history_driver
+    ON vehicle_assignment_history (driver_id, assigned_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_vehicle_assignment_history_vehicle
+    ON vehicle_assignment_history (vehicle_id, assigned_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_assignment_history_driver_open
+    ON vehicle_assignment_history (driver_id)
+    WHERE unassigned_at IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_org_license
     ON vehicles (organization_id, license_plate);
 
@@ -389,55 +407,9 @@ CREATE INDEX IF NOT EXISTS idx_vehicles_status ON vehicles(status);
 CREATE INDEX IF NOT EXISTS idx_vehicles_license_plate ON vehicles(license_plate);
 CREATE INDEX IF NOT EXISTS idx_vehicles_current_driver ON vehicles(current_driver_id);
 
--- Vehicle rentals
-CREATE TABLE IF NOT EXISTS vehicle_rentals (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    vehicle_id UUID CONSTRAINT fk_rentals_vehicle REFERENCES vehicles(id) ON DELETE CASCADE,
-    driver_id UUID CONSTRAINT fk_rentals_driver REFERENCES drivers(id) ON DELETE CASCADE,
-    organization_id UUID CONSTRAINT fk_rentals_organization REFERENCES organizations(id) ON DELETE CASCADE,
-    rental_start_date DATE NOT NULL,
-    rental_end_date DATE NOT NULL,
-    rental_type VARCHAR(50) DEFAULT 'daily'
-        CHECK (rental_type IN ('daily', 'weekly', 'monthly')),
-    total_rent_amount DECIMAL(10, 2),
-    deposit_amount DECIMAL(10, 2) DEFAULT 0.00,
-    deposit_status VARCHAR(50) DEFAULT 'pending'
-        CHECK (deposit_status IN ('pending', 'paid', 'refunded', 'partial')),
-    deposit_paid_at TIMESTAMP,
-    deposit_refunded_at TIMESTAMP,
-    deposit_deduction_amount DECIMAL(10, 2) DEFAULT 0.00,
-    deposit_deduction_reason TEXT,
-    payment_status VARCHAR(50) DEFAULT 'pending'
-        CHECK (payment_status IN ('pending', 'paid', 'partial', 'overdue')),
-    payment_date DATE,
-    payment_method VARCHAR(50),
-    payment_reference VARCHAR(100),
-    rent_paid_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    is_recurring BOOLEAN DEFAULT false,
-    auto_renew_interval INTEGER DEFAULT 7,
-    max_renewal_date DATE,
-    renewed_from_id UUID REFERENCES vehicle_rentals(id),
-    status VARCHAR(50) DEFAULT 'active'
-        CHECK (status IN ('active', 'completed', 'cancelled', 'overdue')),
-    notes TEXT,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_rentals_vehicle ON vehicle_rentals(vehicle_id);
-CREATE INDEX IF NOT EXISTS idx_rentals_driver ON vehicle_rentals(driver_id);
-CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_organization ON vehicle_rentals(organization_id);
-CREATE INDEX IF NOT EXISTS idx_rentals_status ON vehicle_rentals(status);
-CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_period ON vehicle_rentals(rental_start_date, rental_end_date);
-CREATE INDEX IF NOT EXISTS idx_vehicle_rentals_renewal
-    ON vehicle_rentals(rental_end_date, is_recurring, status)
-    WHERE is_recurring = true AND status = 'active';
-
 CREATE TABLE IF NOT EXISTS payout_rent_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     driver_payout_id UUID NOT NULL REFERENCES driver_payouts(id) ON DELETE CASCADE,
-    vehicle_rental_id UUID REFERENCES vehicle_rentals(id) ON DELETE SET NULL,
     entry_type VARCHAR(50) NOT NULL CHECK (entry_type IN ('current_week', 'overdue', 'adjustment')),
     amount NUMERIC(12, 2) NOT NULL,
     description TEXT,
@@ -445,60 +417,6 @@ CREATE TABLE IF NOT EXISTS payout_rent_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_payout_rent_entries_payout ON payout_rent_entries(driver_payout_id);
-CREATE INDEX IF NOT EXISTS idx_payout_rent_entries_rental ON payout_rent_entries(vehicle_rental_id);
-
-ALTER TABLE earnings_records DROP CONSTRAINT IF EXISTS fk_earnings_records_vehicle_rental;
-ALTER TABLE earnings_records
-    ADD CONSTRAINT fk_earnings_records_vehicle_rental
-    FOREIGN KEY (vehicle_rental_id) REFERENCES vehicle_rentals(id) ON DELETE SET NULL;
-
-ALTER TABLE driver_payouts DROP CONSTRAINT IF EXISTS fk_driver_payouts_vehicle_rental;
-ALTER TABLE driver_payouts
-    ADD CONSTRAINT fk_driver_payouts_vehicle_rental
-    FOREIGN KEY (vehicle_rental_id) REFERENCES vehicle_rentals(id) ON DELETE SET NULL;
-
--- Deposit transactions for rentals
-CREATE TABLE IF NOT EXISTS deposit_transactions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    rental_id UUID REFERENCES vehicle_rentals(id) ON DELETE CASCADE,
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-    transaction_type VARCHAR(50) NOT NULL
-        CHECK (transaction_type IN ('payment', 'refund', 'deduction')),
-    amount DECIMAL(10, 2) NOT NULL,
-    payment_method VARCHAR(50) DEFAULT 'cash',
-    payment_status VARCHAR(50) DEFAULT 'completed'
-        CHECK (payment_status IN ('pending', 'completed', 'failed')),
-    transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    notes TEXT,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_deposit_transactions_rental ON deposit_transactions(rental_id);
-CREATE INDEX IF NOT EXISTS idx_deposit_transactions_status ON deposit_transactions(payment_status);
-CREATE INDEX IF NOT EXISTS idx_deposit_transactions_date ON deposit_transactions(transaction_date);
-
--- Rent payments ledger: links payroll-deducted rent (driver_payouts) to vehicle_rentals
--- with per-rental allocation. UNIQUE (driver_payout_id, vehicle_rental_id) keeps
--- mark-as-paid idempotent across retries.
-CREATE TABLE IF NOT EXISTS rent_payments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID NOT NULL CONSTRAINT fk_rent_payments_org
-        REFERENCES organizations(id) ON DELETE CASCADE,
-    vehicle_rental_id UUID NOT NULL CONSTRAINT fk_rent_payments_rental
-        REFERENCES vehicle_rentals(id) ON DELETE CASCADE,
-    driver_payout_id UUID NOT NULL CONSTRAINT fk_rent_payments_payout
-        REFERENCES driver_payouts(id) ON DELETE CASCADE,
-    amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
-    payment_method VARCHAR(50) NOT NULL DEFAULT 'payroll_deduction',
-    paid_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_rent_payments_payout_rental UNIQUE (driver_payout_id, vehicle_rental_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_rent_payments_rental ON rent_payments(vehicle_rental_id);
-CREATE INDEX IF NOT EXISTS idx_rent_payments_payout ON rent_payments(driver_payout_id);
-CREATE INDEX IF NOT EXISTS idx_rent_payments_org_paid_at ON rent_payments(organization_id, paid_at);
 
 -- Vehicle maintenance
 CREATE TABLE IF NOT EXISTS vehicle_maintenance (
@@ -547,143 +465,30 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_documents_expiry ON vehicle_documents(exp
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_verified ON vehicle_documents(is_verified);
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_organization ON vehicle_documents(organization_id);
 
--- Match earnings row to vehicle rental by driver + trip_date (full total_rent_amount, or vehicle.daily_rent if amount unset).
-CREATE OR REPLACE FUNCTION earnings_records_match_vehicle_rental()
-RETURNS TRIGGER AS $$
-DECLARE
-  rid UUID;
-  v_total NUMERIC(12, 2);
-  v_vehicle_id UUID;
-  daily_rent NUMERIC(10, 2);
-  sub_id UUID;
-BEGIN
-  IF NEW.driver_id IS NULL OR NEW.trip_date IS NULL THEN
-    NEW.vehicle_rental_id := NULL;
-    NEW.vehicle_rental_fee := NULL;
-    RETURN NEW;
-  END IF;
-
-  SELECT d.subcontractor_id INTO sub_id FROM drivers d WHERE d.id = NEW.driver_id;
-  IF sub_id IS NOT NULL THEN
-    NEW.vehicle_rental_id := NULL;
-    NEW.vehicle_rental_fee := NULL;
-    RETURN NEW;
-  END IF;
-
-  SELECT v.id, v.total_rent_amount, v.vehicle_id
-  INTO rid, v_total, v_vehicle_id
-  FROM vehicle_rentals v
-  INNER JOIN drivers d ON d.id = NEW.driver_id AND d.organization_id = v.organization_id
-  WHERE v.driver_id = NEW.driver_id
-    AND NEW.trip_date >= v.rental_start_date
-    AND NEW.trip_date <= v.rental_end_date
-    AND v.status IN ('active', 'completed')
-  ORDER BY v.rental_start_date DESC, v.id
-  LIMIT 1;
-
-  IF rid IS NULL THEN
-    NEW.vehicle_rental_id := NULL;
-    NEW.vehicle_rental_fee := NULL;
-    RETURN NEW;
-  END IF;
-
-  NEW.vehicle_rental_id := rid;
-
-  IF v_total IS NOT NULL THEN
-    NEW.vehicle_rental_fee := ROUND(v_total::numeric, 2);
-  ELSE
-    SELECT ve.daily_rent INTO daily_rent FROM vehicles ve WHERE ve.id = v_vehicle_id;
-    IF daily_rent IS NULL THEN
-      NEW.vehicle_rental_fee := NULL;
-    ELSE
-      NEW.vehicle_rental_fee := ROUND(daily_rent::numeric, 2);
-    END IF;
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_earnings_records_match_vehicle_rental ON earnings_records;
-CREATE TRIGGER trg_earnings_records_match_vehicle_rental
-  BEFORE INSERT OR UPDATE OF driver_id, trip_date ON earnings_records
-  FOR EACH ROW
-  EXECUTE FUNCTION earnings_records_match_vehicle_rental();
-
 CREATE OR REPLACE FUNCTION calculate_rental_fee(
   p_organization_id UUID,
   p_driver_id UUID,
   p_week_start DATE,
-  p_week_end DATE,
-  p_ignore_subcontractor BOOLEAN DEFAULT false
+  p_week_end DATE
 ) RETURNS NUMERIC AS $$
 DECLARE
-  sum_fee NUMERIC(14, 6) := 0;
-  rec RECORD;
-  overlap_days INT;
-  rental_span INT;
-  daily_amt NUMERIC(14, 6);
-  piece NUMERIC(14, 6);
+  fee NUMERIC(12, 2);
 BEGIN
-  IF NOT p_ignore_subcontractor THEN
-    IF EXISTS (
-      SELECT 1 FROM drivers d
-      WHERE d.id = p_driver_id AND d.subcontractor_id IS NOT NULL
-    ) THEN
-      RETURN 0;
-    END IF;
-  END IF;
+  SELECT ROUND(COALESCE(v.weekly_rent, 0)::numeric, 2) INTO fee
+  FROM drivers d
+  LEFT JOIN vehicles v
+    ON v.id = d.current_vehicle_id
+   AND v.organization_id = d.organization_id
+  WHERE d.id = p_driver_id
+    AND d.organization_id = p_organization_id;
 
-  FOR rec IN
-    SELECT
-      vr.rental_start_date,
-      vr.rental_end_date,
-      vr.rental_type,
-      vr.total_rent_amount,
-      vr.vehicle_id
-    FROM vehicle_rentals vr
-    WHERE vr.organization_id = p_organization_id
-      AND vr.driver_id = p_driver_id
-      AND vr.status IN ('active', 'completed')
-      AND vr.rental_end_date >= p_week_start
-      AND vr.rental_start_date <= p_week_end
-  LOOP
-    overlap_days := (LEAST(rec.rental_end_date, p_week_end)
-      - GREATEST(rec.rental_start_date, p_week_start) + 1)::INT;
-    IF overlap_days <= 0 THEN
-      CONTINUE;
-    END IF;
-
-    rental_span := GREATEST((rec.rental_end_date - rec.rental_start_date + 1), 1);
-
-    IF rec.rental_type = 'weekly' AND rec.total_rent_amount IS NOT NULL THEN
-      piece := rec.total_rent_amount::numeric * overlap_days::numeric / 7::numeric;
-    ELSIF rec.rental_type = 'monthly' AND rec.total_rent_amount IS NOT NULL THEN
-      piece := rec.total_rent_amount::numeric * overlap_days::numeric / rental_span::numeric;
-    ELSIF rec.total_rent_amount IS NOT NULL THEN
-      piece := rec.total_rent_amount::numeric * overlap_days::numeric / rental_span::numeric;
-    ELSE
-      SELECT ve.daily_rent::numeric INTO daily_amt FROM vehicles ve WHERE ve.id = rec.vehicle_id;
-      IF daily_amt IS NULL THEN
-        piece := 0;
-      ELSE
-        piece := daily_amt * overlap_days::numeric;
-      END IF;
-    END IF;
-
-    sum_fee := sum_fee + ROUND(COALESCE(piece, 0)::numeric, 2);
-  END LOOP;
-
-  RETURN ROUND(COALESCE(sum_fee, 0)::numeric, 2);
+  RETURN COALESCE(fee, 0);
 END;
 $$ LANGUAGE plpgsql STABLE;
 
-COMMENT ON FUNCTION calculate_rental_fee(UUID, UUID, DATE, DATE, BOOLEAN) IS
-  'Fleet-week vehicle rent for driver payroll. Returns 0 when driver is sub-managed unless p_ignore_subcontractor is true.';
+COMMENT ON FUNCTION calculate_rental_fee(UUID, UUID, DATE, DATE) IS
+  'Payroll vehicle rent: vehicles.weekly_rent when drivers.current_vehicle_id is set; else 0. Week dates ignored.';
 
--- Per-rental breakdown of calculate_rental_fee math. Returns one row per contributing
--- rental with its prorated piece. Sum of rows for the same (org, driver, week) equals
--- calculate_rental_fee(...) within rounding. Used by mark-as-paid to write rent_payments.
 CREATE OR REPLACE FUNCTION allocate_rental_fee(
   p_organization_id UUID,
   p_driver_id UUID,
@@ -691,61 +496,19 @@ CREATE OR REPLACE FUNCTION allocate_rental_fee(
   p_week_end DATE
 ) RETURNS TABLE (vehicle_rental_id UUID, amount NUMERIC) AS $$
 DECLARE
-  rec RECORD;
-  overlap_days INT;
-  rental_span INT;
-  daily_amt NUMERIC(14, 6);
-  piece NUMERIC(14, 6);
+  fee NUMERIC(12, 2);
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM drivers d WHERE d.id = p_driver_id AND d.subcontractor_id IS NOT NULL
-  ) THEN
-    RETURN;
+  fee := calculate_rental_fee(p_organization_id, p_driver_id, p_week_start, p_week_end);
+  IF fee > 0 THEN
+    vehicle_rental_id := NULL;
+    amount := fee;
+    RETURN NEXT;
   END IF;
-
-  FOR rec IN
-    SELECT vr.id, vr.rental_start_date, vr.rental_end_date, vr.rental_type,
-           vr.total_rent_amount, vr.vehicle_id
-    FROM vehicle_rentals vr
-    WHERE vr.organization_id = p_organization_id
-      AND vr.driver_id = p_driver_id
-      AND vr.status IN ('active', 'completed')
-      AND vr.rental_end_date >= p_week_start
-      AND vr.rental_start_date <= p_week_end
-  LOOP
-    overlap_days := (LEAST(rec.rental_end_date, p_week_end)
-      - GREATEST(rec.rental_start_date, p_week_start) + 1)::INT;
-    IF overlap_days <= 0 THEN
-      CONTINUE;
-    END IF;
-
-    rental_span := GREATEST((rec.rental_end_date - rec.rental_start_date + 1), 1);
-
-    IF rec.rental_type = 'weekly' AND rec.total_rent_amount IS NOT NULL THEN
-      piece := rec.total_rent_amount::numeric * overlap_days::numeric / 7::numeric;
-    ELSIF rec.total_rent_amount IS NOT NULL THEN
-      piece := rec.total_rent_amount::numeric * overlap_days::numeric / rental_span::numeric;
-    ELSE
-      SELECT ve.daily_rent::numeric INTO daily_amt FROM vehicles ve WHERE ve.id = rec.vehicle_id;
-      IF daily_amt IS NULL THEN
-        piece := 0;
-      ELSE
-        piece := daily_amt * overlap_days::numeric;
-      END IF;
-    END IF;
-
-    piece := ROUND(COALESCE(piece, 0)::numeric, 2);
-    IF piece > 0 THEN
-      vehicle_rental_id := rec.id;
-      amount := piece;
-      RETURN NEXT;
-    END IF;
-  END LOOP;
 END;
 $$ LANGUAGE plpgsql STABLE;
 
 COMMENT ON FUNCTION allocate_rental_fee(UUID, UUID, DATE, DATE) IS
-    'Per-rental breakdown of calculate_rental_fee: returns (rental_id, prorated_amount) rows.';
+  'Payroll rent breakdown: one row (no vehicle_rentals FK) matching calculate_rental_fee.';
 
 CREATE OR REPLACE FUNCTION allocate_vehicle_rent_pieces(
     p_organization_id UUID,
@@ -754,69 +517,15 @@ CREATE OR REPLACE FUNCTION allocate_vehicle_rent_pieces(
     p_week_end DATE,
     p_include_completed BOOLEAN
 ) RETURNS TABLE (vehicle_rental_id UUID, amount NUMERIC) AS $$
-DECLARE
-    rec RECORD;
-    overlap_days INT;
-    rental_span INT;
-    daily_amt NUMERIC(14, 6);
-    piece NUMERIC(14, 6);
 BEGIN
-    IF EXISTS (
-      SELECT 1 FROM drivers d WHERE d.id = p_driver_id AND d.subcontractor_id IS NOT NULL
-    ) THEN
-      RETURN;
-    END IF;
-
-    FOR rec IN
-        SELECT vr.id, vr.rental_start_date, vr.rental_end_date, vr.rental_type,
-               vr.total_rent_amount, vr.vehicle_id
-        FROM vehicle_rentals vr
-        WHERE vr.organization_id = p_organization_id
-          AND vr.driver_id = p_driver_id
-          AND (
-            CASE WHEN p_include_completed
-              THEN vr.status IN ('active', 'completed')
-              ELSE vr.status = 'active'
-            END
-          )
-          AND vr.rental_end_date >= p_week_start
-          AND vr.rental_start_date <= p_week_end
-    LOOP
-        overlap_days := (LEAST(rec.rental_end_date, p_week_end)
-            - GREATEST(rec.rental_start_date, p_week_start) + 1)::INT;
-        IF overlap_days <= 0 THEN
-            CONTINUE;
-        END IF;
-
-        rental_span := GREATEST((rec.rental_end_date - rec.rental_start_date + 1), 1);
-
-        IF rec.rental_type = 'weekly' AND rec.total_rent_amount IS NOT NULL THEN
-            piece := rec.total_rent_amount::numeric * overlap_days::numeric / 7::numeric;
-        ELSIF rec.rental_type = 'monthly' AND rec.total_rent_amount IS NOT NULL THEN
-            piece := rec.total_rent_amount::numeric * overlap_days::numeric / rental_span::numeric;
-        ELSIF rec.total_rent_amount IS NOT NULL THEN
-            piece := rec.total_rent_amount::numeric * overlap_days::numeric / rental_span::numeric;
-        ELSE
-            SELECT ve.daily_rent::numeric INTO daily_amt FROM vehicles ve WHERE ve.id = rec.vehicle_id;
-            IF daily_amt IS NULL THEN
-                piece := 0;
-            ELSE
-                piece := daily_amt * overlap_days::numeric;
-            END IF;
-        END IF;
-
-        piece := ROUND(COALESCE(piece, 0)::numeric, 2);
-        IF piece > 0 THEN
-            vehicle_rental_id := rec.id;
-            amount := piece;
-            RETURN NEXT;
-        END IF;
-    END LOOP;
+    RETURN QUERY
+    SELECT NULL::uuid, a.amount
+    FROM allocate_rental_fee(p_organization_id, p_driver_id, p_week_start, p_week_end) a;
 END;
 $$ LANGUAGE plpgsql STABLE;
 
 COMMENT ON FUNCTION allocate_vehicle_rent_pieces(UUID, UUID, DATE, DATE, BOOLEAN) IS
-    'Fleet-week proration per rental; active-only vs active+completed via flag (matches calculate_rental_fee math).';
+    'Matches allocate_rental_fee; p_include_completed ignored (assignment-based rent).';
 
 CREATE OR REPLACE FUNCTION refresh_subcontractor_rent_charges(
   p_organization_id UUID,
@@ -835,7 +544,7 @@ BEGIN
       AND s.status = 'active'
   LOOP
     SELECT ROUND(COALESCE(SUM(
-      calculate_rental_fee(p_organization_id, d.id, p_period_start, p_period_end, true)
+      calculate_rental_fee(p_organization_id, d.id, p_period_start, p_period_end)
     ), 0)::numeric, 2) INTO amt
     FROM drivers d
     WHERE d.organization_id = p_organization_id
@@ -867,7 +576,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION refresh_subcontractor_rent_charges(UUID, DATE, DATE) IS
-  'Rebuild subcontractor_rent_charges for all active subs in an org for the given inclusive period.';
+  'Deprecated: legacy subcontractor_rent_charges aggregate; settlements use SUM(driver_payouts.vehicle_rental_fee).';
 
 CREATE OR REPLACE FUNCTION subcontractor_settlement_totals(
     p_organization_id UUID,
@@ -1013,9 +722,10 @@ BEGIN
   FROM (
     SELECT
       id,
-      calculate_rental_fee(organization_id, driver_id, payment_period_start, payment_period_end, false)::numeric AS calc
+      calculate_rental_fee(organization_id, driver_id, payment_period_start, payment_period_end)::numeric AS calc
     FROM driver_payouts
     WHERE organization_id = p_org_id
+      AND payment_status NOT IN ('paid', 'approved')
   ) rf
   WHERE dp.id = rf.id;
 

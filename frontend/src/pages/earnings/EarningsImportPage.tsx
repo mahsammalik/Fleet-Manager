@@ -252,17 +252,6 @@ export function EarningsImportPage() {
             <p className="font-medium">Import complete</p>
             <p className="mt-1 text-emerald-800/90">
               {importSuccess.insertedRows} row(s) saved.
-              {typeof importSuccess.autoMatchedVehicleRentals === "number" && (
-                <>
-                  {" "}
-                  Auto-matched {importSuccess.autoMatchedVehicleRentals} vehicle rental
-                  {importSuccess.autoMatchedVehicleRentals === 1 ? "" : "s"}.
-                </>
-              )}
-            </p>
-            <p className="mt-2 text-xs text-emerald-900/80">
-              Matched rows use the full vehicle rental contract amount (total_rent_amount), not a daily split. Payouts sum each
-              rental once per period.
             </p>
           </div>
         )}

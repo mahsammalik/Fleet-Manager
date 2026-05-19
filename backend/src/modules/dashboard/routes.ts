@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticateJWT, requireRole } from "../../middleware/auth";
 import { query } from "../../db/pool";
+import { handleRecentAssignments } from "../vehicles/vehicleAssignmentHistoryHandlers";
 
 const router = Router();
 
@@ -20,8 +21,7 @@ router.get("/stats", async (req, res) => {
       pendingDocsRes,
       expiredDocsRes,
       vehiclesRes,
-      activeRentalsRes,
-      overdueRentalsRes,
+      assignedVehiclesRes,
       totalCommissionRes,
       pendingPaymentsRes,
       vehicleRentalFeesRes,
@@ -46,14 +46,9 @@ router.get("/stats", async (req, res) => {
       query<{ count: string }>("SELECT COUNT(*) as count FROM vehicles WHERE organization_id = $1", [orgId]),
       query<{ count: string }>(
         `SELECT COUNT(*) as count
-         FROM vehicle_rentals
-         WHERE organization_id = $1 AND status = 'active'`,
-        [orgId],
-      ),
-      query<{ count: string }>(
-        `SELECT COUNT(*) as count
-         FROM vehicle_rentals
-         WHERE organization_id = $1 AND status = 'active' AND CURRENT_DATE > rental_end_date`,
+         FROM drivers
+         WHERE organization_id = $1 AND current_vehicle_id IS NOT NULL
+           AND (is_deleted = false OR is_deleted IS NULL)`,
         [orgId],
       ),
       query<{ total: string | null }>(
@@ -81,8 +76,7 @@ router.get("/stats", async (req, res) => {
     const pendingDocuments = parseInt(pendingDocsRes.rows[0]?.count ?? "0", 10);
     const expiredDocuments = parseInt(expiredDocsRes.rows[0]?.count ?? "0", 10);
     const totalVehicles = parseInt(vehiclesRes.rows[0]?.count ?? "0", 10);
-    const activeRentals = parseInt(activeRentalsRes.rows[0]?.count ?? "0", 10);
-    const overdueRentals = parseInt(overdueRentalsRes.rows[0]?.count ?? "0", 10);
+    const assignedVehicles = parseInt(assignedVehiclesRes.rows[0]?.count ?? "0", 10);
     const totalCommissionEarned = parseFloat(totalCommissionRes.rows[0]?.total ?? "0");
     const pendingPayments = parseFloat(pendingPaymentsRes.rows[0]?.total ?? "0");
     const totalVehicleRentalFees = parseFloat(vehicleRentalFeesRes.rows[0]?.total ?? "0");
@@ -93,8 +87,7 @@ router.get("/stats", async (req, res) => {
       pendingDocuments,
       expiredDocuments,
       totalVehicles,
-      activeRentals,
-      overdueRentals,
+      assignedVehicles,
       totalCommissionEarned,
       pendingPayments,
       totalVehicleRentalFees,
@@ -160,6 +153,8 @@ router.get("/documents", async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 });
+
+router.get("/recent-assignments", handleRecentAssignments);
 
 router.get("/activity", async (req, res) => {
   const orgId = req.user?.orgId;

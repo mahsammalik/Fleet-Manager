@@ -23,6 +23,7 @@ import { insertEarningsPreviewStaging } from "./earningsPreviewStage";
 import { stagingPayloadToPreviewRow } from "./previewRowMapper";
 import { parseCommissionBaseType, type CommissionBaseType } from "./calculatePayout";
 import { readOrgGlovoCommissionBase, writeOrgGlovoCommissionBase } from "./orgImportSettings";
+import { refreshVehicleRentForPeriod } from "./refreshVehicleRentForPeriod";
 
 /** Platform net from row columns (matches netIncomeFromGrossAndTaxa in calculatePayout). Alias: er */
 const ER_NET_INCOME_SQL = `(
@@ -443,7 +444,6 @@ router.post("/import/commit", async (req, res) => {
       skippedNoDate: commitResult.skippedNoDate,
       skippedNoMoney: commitResult.skippedNoMoney,
       totals: commitResult.totals,
-      autoMatchedVehicleRentals: commitResult.autoMatchedVehicleRentals,
       warnings: commitResult.warnings,
     });
   } catch (err) {
@@ -701,8 +701,6 @@ router.get("/records/payout-integrity", async (req, res) => {
       commission_base: string | null;
       total_transfer_earnings: string | null;
       account_opening_fee: string | null;
-      vehicle_rental_fee: string | null;
-      vehicle_rental_id: string | null;
       expected_payout: string | null;
       ok: boolean;
     }>(
@@ -717,8 +715,6 @@ router.get("/records/payout-integrity", async (req, res) => {
          er.commission_base::text AS commission_base,
          er.total_transfer_earnings::text AS total_transfer_earnings,
          er.account_opening_fee::text AS account_opening_fee,
-         er.vehicle_rental_fee::text,
-         er.vehicle_rental_id::text,
          ${ER_DRIVER_PAYOUT_SQL}::text AS expected_payout,
          (COALESCE(er.driver_payout, 0)::numeric(12, 2) = ${ER_DRIVER_PAYOUT_SQL}::numeric(12, 2)) AS ok
        FROM earnings_records er
@@ -884,7 +880,6 @@ async function fetchEarningsReportRows(
               (SELECT json_agg(
                   json_build_object(
                     'id', pe.id::text,
-                    'vehicle_rental_id', pe.vehicle_rental_id::text,
                     'entry_type', pe.entry_type,
                     'amount', pe.amount::text,
                     'description', pe.description
@@ -978,7 +973,6 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
               (SELECT json_agg(
                   json_build_object(
                     'id', pe.id::text,
-                    'vehicle_rental_id', pe.vehicle_rental_id::text,
                     'entry_type', pe.entry_type,
                     'amount', pe.amount::text,
                     'description', pe.description
@@ -1117,7 +1111,7 @@ router.get("/reports/commission-by-base-type", async (req, res) => {
   }
 });
 
-router.get("/payouts/with-proration-details", async (req, res) => {
+router.get("/payouts/assignment-details", async (req, res) => {
   const orgId = req.user?.orgId;
   if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
 
@@ -1174,36 +1168,15 @@ router.get("/payouts/with-proration-details", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT
           dp.id::text AS payout_id,
+          dp.driver_id::text AS driver_id,
           dp.vehicle_rental_fee::text AS vehicle_rental_fee,
           dp.remaining_debt_amount::text AS remaining_debt_amount,
-          vr.id::text AS vehicle_rental_id,
-          vr.total_rent_amount::text AS rental_amount,
-          vr.rental_start_date::text AS rental_start_date,
-          vr.rental_end_date::text AS rental_end_date,
-          vr.rental_type,
-          vr.status AS rental_status,
-          EXISTS (
-            SELECT 1
-            FROM vehicle_rentals vr2
-            WHERE vr2.organization_id = dp.organization_id
-              AND vr2.driver_id = dp.driver_id
-              AND vr2.status = 'active'
-              AND vr2.rental_end_date > dp.payment_period_end
-              AND vr2.rental_start_date <= dp.payment_period_end
-          ) AS has_unreturned_active_rental,
-          NULL::text AS overlap_pct
+          (d.current_vehicle_id IS NOT NULL) AS has_vehicle_assigned,
+          v.license_plate,
+          v.weekly_rent::text AS weekly_rent
         FROM driver_payouts dp
-        INNER JOIN drivers d ON d.id = dp.driver_id
-        LEFT JOIN LATERAL (
-          SELECT v.*
-          FROM vehicle_rentals v
-          WHERE v.organization_id = dp.organization_id
-            AND v.driver_id = dp.driver_id
-            AND v.rental_start_date <= dp.payment_period_end
-            AND v.rental_end_date >= dp.payment_period_start
-          ORDER BY v.rental_start_date DESC, v.id
-          LIMIT 1
-        ) vr ON true
+        INNER JOIN drivers d ON d.id = dp.driver_id AND d.organization_id = dp.organization_id
+        LEFT JOIN vehicles v ON v.id = d.current_vehicle_id AND v.organization_id = d.organization_id
         WHERE ${whereSql}
         ORDER BY dp.payment_period_end DESC, dp.created_at DESC
         LIMIT $${p} OFFSET $${p + 1}`,
@@ -1213,9 +1186,15 @@ router.get("/payouts/with-proration-details", async (req, res) => {
     return res.json({ items: rows, page, pageSize });
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error("Earnings payouts proration details error", err);
-    return res.status(500).json({ message: "Failed to load proration details" });
+    console.error("Earnings payouts assignment details error", err);
+    return res.status(500).json({ message: "Failed to load assignment details" });
   }
+});
+
+/** @deprecated Use GET /payouts/assignment-details */
+router.get("/payouts/with-proration-details", (req, res) => {
+  const url = req.originalUrl.replace("/with-proration-details", "/assignment-details");
+  res.redirect(307, url);
 });
 
 router.patch("/payouts/bulk", async (req, res) => {
@@ -1303,86 +1282,8 @@ router.patch("/payouts/bulk", async (req, res) => {
       ],
     );
 
-    let rentPaymentsRecorded = 0;
-    if (paymentStatus === "paid" && updateRes.rows.length > 0) {
-      const paidIds = updateRes.rows.map((r) => r.id);
-      const insRes = await client.query<{ vehicle_rental_id: string; amount: string }>(
-        `WITH inserted AS (
-           INSERT INTO rent_payments
-             (organization_id, vehicle_rental_id, driver_payout_id, amount, payment_method, paid_at)
-           SELECT dp.organization_id, s.vehicle_rental_id, dp.id, s.amount,
-                  COALESCE($2, 'payroll_deduction'),
-                  COALESCE($3::timestamp, NOW())
-           FROM driver_payouts dp
-           INNER JOIN (
-             SELECT pe.driver_payout_id AS payout_id, pe.vehicle_rental_id, SUM(pe.amount)::numeric AS amount
-             FROM payout_rent_entries pe
-             WHERE pe.driver_payout_id = ANY($1::uuid[])
-               AND pe.entry_type IN ('current_week', 'overdue')
-             GROUP BY pe.driver_payout_id, pe.vehicle_rental_id
-             HAVING SUM(pe.amount) > 0
-           ) s ON s.payout_id = dp.id
-           WHERE dp.id = ANY($1::uuid[])
-             AND COALESCE(dp.vehicle_rental_fee, 0) > 0
-           ON CONFLICT (driver_payout_id, vehicle_rental_id) DO NOTHING
-           RETURNING vehicle_rental_id, amount
-         ),
-         inserted_fallback AS (
-           INSERT INTO rent_payments
-             (organization_id, vehicle_rental_id, driver_payout_id, amount, payment_method, paid_at)
-           SELECT dp.organization_id, a.vehicle_rental_id, dp.id, a.amount,
-                  COALESCE($2, 'payroll_deduction'),
-                  COALESCE($3::timestamp, NOW())
-           FROM driver_payouts dp
-           CROSS JOIN LATERAL allocate_rental_fee(
-             dp.organization_id, dp.driver_id,
-             dp.payment_period_start, dp.payment_period_end
-           ) a
-           WHERE dp.id = ANY($1::uuid[])
-             AND COALESCE(dp.vehicle_rental_fee, 0) > 0
-             AND a.amount > 0
-             AND NOT EXISTS (
-               SELECT 1 FROM payout_rent_entries pe
-               WHERE pe.driver_payout_id = dp.id
-                 AND pe.entry_type IN ('current_week', 'overdue')
-             )
-           ON CONFLICT (driver_payout_id, vehicle_rental_id) DO NOTHING
-           RETURNING vehicle_rental_id, amount
-         )
-         SELECT vehicle_rental_id::text, amount::text FROM inserted
-         UNION ALL
-         SELECT vehicle_rental_id::text, amount::text FROM inserted_fallback`,
-        [paidIds, body.paymentMethod ?? null, paymentDate],
-      );
-
-      if (insRes.rows.length > 0) {
-        const totals = new Map<string, number>();
-        for (const r of insRes.rows) {
-          totals.set(r.vehicle_rental_id, (totals.get(r.vehicle_rental_id) ?? 0) + Number(r.amount));
-        }
-        const rentalIds = [...totals.keys()];
-        const amounts = rentalIds.map((id) => totals.get(id) ?? 0);
-        await client.query(
-          `UPDATE vehicle_rentals vr
-           SET rent_paid_amount = ROUND((vr.rent_paid_amount + agg.delta)::numeric, 2),
-               payment_status = CASE
-                 WHEN vr.total_rent_amount IS NULL OR vr.total_rent_amount = 0 THEN vr.payment_status
-                 WHEN (vr.rent_paid_amount + agg.delta) >= vr.total_rent_amount THEN 'paid'
-                 WHEN (vr.rent_paid_amount + agg.delta) > 0 THEN 'partial'
-                 ELSE vr.payment_status
-               END,
-               payment_date = COALESCE(vr.payment_date, CURRENT_DATE),
-               updated_at = NOW()
-           FROM UNNEST($1::uuid[], $2::numeric[]) AS agg(rental_id, delta)
-           WHERE vr.id = agg.rental_id`,
-          [rentalIds, amounts],
-        );
-        rentPaymentsRecorded = insRes.rows.length;
-      }
-    }
-
     await client.query("COMMIT");
-    return res.json({ updatedRows: updateRes.rowCount ?? 0, rentPaymentsRecorded });
+    return res.json({ updatedRows: updateRes.rowCount ?? 0 });
   } catch (err) {
     try {
       await client.query("ROLLBACK");
@@ -2031,15 +1932,114 @@ router.post("/subcontractors/refresh-rent-charges", async (req, res) => {
   if (!periodStart || !periodEnd) {
     return res.status(400).json({ message: "periodStart and periodEnd are required" });
   }
+  const client = await pool.connect();
   try {
-    const { rows } = await query<{ n: string }>(
-      `SELECT refresh_subcontractor_rent_charges($1::uuid, $2::date, $3::date)::text AS n`,
-      [orgId, periodStart, periodEnd],
-    );
-    return res.json({ updatedSubcontractors: parseInt(rows[0]?.n ?? "0", 10) });
+    await client.query("BEGIN");
+    const result = await refreshVehicleRentForPeriod(client, orgId, periodStart, periodEnd);
+    await client.query("COMMIT");
+    return res.json({
+      periodStart,
+      periodEnd,
+      driverPayoutsFeesUpdated: result.feesUpdated,
+      driverPayoutsSynced: result.payoutsSynced,
+    });
   } catch (err) {
+    await client.query("ROLLBACK");
     // eslint-disable-next-line no-console
     console.error("refresh-rent-charges error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  } finally {
+    client.release();
+  }
+});
+
+router.get("/vehicle-rent-validation", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+
+  const periodStart =
+    typeof req.query.periodStart === "string" ? req.query.periodStart.slice(0, 10) : null;
+  const periodEnd = typeof req.query.periodEnd === "string" ? req.query.periodEnd.slice(0, 10) : null;
+
+  const periodFilter =
+    periodStart &&
+    periodEnd &&
+    /^\d{4}-\d{2}-\d{2}$/.test(periodStart) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(periodEnd);
+
+  try {
+    const params: unknown[] = [orgId];
+    let periodClause = "";
+    if (periodFilter) {
+      periodClause = ` AND dp.payment_period_start = $2::date AND dp.payment_period_end = $3::date`;
+      params.push(periodStart, periodEnd);
+    }
+
+    const { rows: zeroFee } = await query<{
+      payout_id: string;
+      driver_id: string;
+      period_start: string;
+      period_end: string;
+      driver_name: string;
+    }>(
+      `SELECT dp.id::text AS payout_id,
+              dp.driver_id::text AS driver_id,
+              dp.payment_period_start::text AS period_start,
+              dp.payment_period_end::text AS period_end,
+              TRIM(COALESCE(d.first_name, '') || ' ' || COALESCE(d.last_name, '')) AS driver_name
+       FROM driver_payouts dp
+       INNER JOIN drivers d ON d.id = dp.driver_id AND d.organization_id = dp.organization_id
+       INNER JOIN vehicles v ON v.id = d.current_vehicle_id AND v.organization_id = d.organization_id
+       WHERE dp.organization_id = $1::uuid
+         AND COALESCE(v.weekly_rent, 0) > 0
+         AND COALESCE(dp.vehicle_rental_fee, 0) = 0
+         ${periodClause}
+       ORDER BY d.last_name, d.first_name
+       LIMIT 500`,
+      params,
+    );
+
+    const mismatchParams: unknown[] = [orgId];
+    let mismatchPeriodClause = "";
+    if (periodFilter) {
+      mismatchPeriodClause = ` AND dp.payment_period_start = $2::date AND dp.payment_period_end = $3::date`;
+      mismatchParams.push(periodStart, periodEnd);
+    }
+
+    const { rows: mismatch } = await query<{
+      payout_id: string;
+      expected_rental: string;
+      actual_rental: string;
+    }>(
+      `SELECT dp.id::text AS payout_id,
+              calc.expected_rental::text,
+              COALESCE(dp.vehicle_rental_fee, 0)::text AS actual_rental
+       FROM driver_payouts dp
+       CROSS JOIN LATERAL (
+         SELECT calculate_rental_fee(
+           dp.organization_id,
+           dp.driver_id,
+           dp.payment_period_start,
+           dp.payment_period_end
+         )::numeric AS expected_rental
+       ) calc
+       WHERE dp.organization_id = $1::uuid
+         ${mismatchPeriodClause}
+         AND ROUND(COALESCE(dp.vehicle_rental_fee, 0)::numeric, 2) <> ROUND(calc.expected_rental::numeric, 2)
+       LIMIT 200`,
+      mismatchParams,
+    );
+
+    return res.json({
+      periodStart: periodFilter ? periodStart : null,
+      periodEnd: periodFilter ? periodEnd : null,
+      assignedVehicleZeroFee: zeroFee,
+      feeMismatch: mismatch,
+      issueCount: zeroFee.length + mismatch.length,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("vehicle-rent-validation error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });

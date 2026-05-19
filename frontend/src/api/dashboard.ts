@@ -9,8 +9,7 @@ export interface DashboardStats {
   pendingPayments: number;
   totalVehicleRentalFees?: number;
   totalVehicles?: number;
-  activeRentals?: number;
-  overdueRentals?: number;
+  assignedVehicles?: number;
 }
 
 export interface DriverStatusItem {
@@ -48,5 +47,24 @@ export function getDocumentStats() {
 
 export function getRecentActivity() {
   return api.get<DashboardActivityItem[]>("/dashboard/activity");
+}
+
+export interface RecentAssignmentItem {
+  id: string;
+  driver_id: string;
+  vehicle_id: string;
+  assigned_at: string;
+  unassigned_at: string | null;
+  weekly_rent_at_time: string | null;
+  driver_name: string;
+  license_plate: string | null;
+  vehicle_name: string;
+  is_active: boolean;
+}
+
+export function getRecentAssignments(limit = 5) {
+  return api.get<{ items: RecentAssignmentItem[] }>("/dashboard/recent-assignments", {
+    params: { limit: String(limit) },
+  });
 }
 

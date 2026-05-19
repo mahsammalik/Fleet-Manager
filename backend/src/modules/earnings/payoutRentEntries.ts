@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 
 /**
- * Rebuilds payroll vehicle rent line items for one payout (current_week + overdue carry),
+ * Rebuilds payroll vehicle rent line item from driver vehicle assignment (weekly_rent),
  * updates vehicle_rental_fee and raw_net_amount from entry totals (includes adjustment rows).
  */
 export async function syncPayoutRentEntries(client: PoolClient, orgId: string, payoutId: string): Promise<void> {
@@ -22,79 +22,25 @@ export async function syncPayoutRentEntries(client: PoolClient, orgId: string, p
   );
 
   await client.query(
-    `INSERT INTO payout_rent_entries (driver_payout_id, vehicle_rental_id, entry_type, amount, description)
+    `INSERT INTO payout_rent_entries (driver_payout_id, entry_type, amount, description)
      SELECT $1::uuid,
-            v.vehicle_rental_id,
             'current_week',
-            v.amount,
-            ('Prorated rent for period ' || dp.payment_period_start::text || '–' || dp.payment_period_end::text)
+            calculate_rental_fee(dp.organization_id, dp.driver_id, dp.payment_period_start, dp.payment_period_end),
+            (
+              'Weekly vehicle rent'
+              || COALESCE(' (' || v.license_plate || ')', '')
+              || ' for period '
+              || dp.payment_period_start::text
+              || '–'
+              || dp.payment_period_end::text
+            )
      FROM driver_payouts dp
-     CROSS JOIN LATERAL allocate_vehicle_rent_pieces(
-       dp.organization_id,
-       dp.driver_id,
-       dp.payment_period_start,
-       dp.payment_period_end,
-       false
-     ) v
-     WHERE dp.id = $1::uuid`,
+     LEFT JOIN drivers d ON d.id = dp.driver_id AND d.organization_id = dp.organization_id
+     LEFT JOIN vehicles v ON v.id = d.current_vehicle_id AND v.organization_id = d.organization_id
+     WHERE dp.id = $1::uuid
+       AND calculate_rental_fee(dp.organization_id, dp.driver_id, dp.payment_period_start, dp.payment_period_end) > 0`,
     [payoutId],
   );
-
-  const prevRes = await client.query<{ prev_id: string | null }>(
-    `WITH bounds AS (
-       SELECT
-         dp.organization_id,
-         dp.driver_id,
-         (dp.payment_period_start - (dp.payment_period_end - dp.payment_period_start + 1))::date AS prev_start,
-         (dp.payment_period_start - 1)::date AS prev_end,
-         dp.payment_period_start AS cur_start,
-         dp.payment_period_end AS cur_end
-       FROM driver_payouts dp
-       WHERE dp.id = $1::uuid AND dp.organization_id = $2::uuid
-     )
-     SELECT prev.id::text AS prev_id
-     FROM bounds b
-     LEFT JOIN driver_payouts prev
-       ON prev.organization_id = b.organization_id
-       AND prev.driver_id = b.driver_id
-       AND prev.payment_period_start = b.prev_start
-       AND prev.payment_period_end = b.prev_end`,
-    [payoutId, orgId],
-  );
-  const prevId = prevRes.rows[0]?.prev_id ?? null;
-
-  if (prevId) {
-    await client.query(
-      `INSERT INTO payout_rent_entries (driver_payout_id, vehicle_rental_id, entry_type, amount, description)
-       SELECT $1::uuid,
-              a.vehicle_rental_id,
-              'overdue',
-              a.amount,
-              ('Prior-week payroll rent unpaid (' || b.prev_start::text || '–' || b.prev_end::text || ')')
-       FROM driver_payouts dp
-       CROSS JOIN LATERAL (
-         SELECT
-           (dp.payment_period_start - (dp.payment_period_end - dp.payment_period_start + 1))::date AS prev_start,
-           (dp.payment_period_start - 1)::date AS prev_end
-       ) b
-       CROSS JOIN LATERAL allocate_rental_fee(dp.organization_id, dp.driver_id, b.prev_start, b.prev_end) a
-       WHERE dp.id = $1::uuid
-         AND a.amount > 0
-         AND NOT EXISTS (
-           SELECT 1 FROM rent_payments rp
-           WHERE rp.driver_payout_id = $2::uuid
-             AND rp.vehicle_rental_id = a.vehicle_rental_id
-         )
-         AND EXISTS (
-           SELECT 1 FROM vehicle_rentals vr
-           WHERE vr.id = a.vehicle_rental_id
-             AND vr.status = 'active'
-             AND vr.rental_end_date >= dp.payment_period_start
-             AND vr.rental_start_date <= dp.payment_period_end
-         )`,
-      [payoutId, prevId],
-    );
-  }
 
   await client.query(
     `UPDATE driver_payouts dp
