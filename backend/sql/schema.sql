@@ -20,6 +20,31 @@ CREATE TABLE IF NOT EXISTS organizations (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- B2B subcontractors (manage driver groups; fleet bills rent + pays bulk to sub)
+CREATE TABLE IF NOT EXISTS subcontractors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    legal_name VARCHAR(255) NOT NULL,
+    registration_type VARCHAR(50) NOT NULL DEFAULT 'srl'
+        CHECK (registration_type IN ('srl', 'sa', 'other')),
+    registration_number VARCHAR(100),
+    tax_id VARCHAR(100),
+    email VARCHAR(255),
+    phone VARCHAR(30),
+    address TEXT,
+    bank_name VARCHAR(255),
+    bank_account_iban VARCHAR(100),
+    status VARCHAR(50) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    contract_start_date DATE,
+    contract_end_date DATE,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_subcontractors_org ON subcontractors(organization_id);
+CREATE INDEX IF NOT EXISTS idx_subcontractors_org_status ON subcontractors(organization_id, status);
+
 -- Users table with roles: admin, accountant, driver
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -40,6 +65,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS drivers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     organization_id UUID CONSTRAINT fk_drivers_organization REFERENCES organizations(id) ON DELETE CASCADE,
+    subcontractor_id UUID REFERENCES subcontractors(id) ON DELETE SET NULL,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
@@ -52,8 +78,8 @@ CREATE TABLE IF NOT EXISTS drivers (
     license_class VARCHAR(20),
     hire_date DATE,
     employment_status VARCHAR(50) DEFAULT 'active' CHECK (employment_status IN ('active', 'suspended', 'terminated')),
-    commission_rate DECIMAL(5, 2) DEFAULT 20.00,
-    base_commission_rate DECIMAL(5, 2) DEFAULT 20.00,
+    commission_rate DECIMAL(5, 2) DEFAULT 10.00,
+    base_commission_rate DECIMAL(5, 2) DEFAULT 10.00,
     commission_type VARCHAR(50) DEFAULT 'percentage' CHECK (commission_type IN ('percentage', 'fixed_amount', 'hybrid')),
     fixed_commission_amount DECIMAL(10, 2) DEFAULT 0.00,
     minimum_commission DECIMAL(10, 2) DEFAULT 0.00,
@@ -99,6 +125,7 @@ CREATE TABLE IF NOT EXISTS driver_documents (
 CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_drivers_organization ON drivers(organization_id);
+CREATE INDEX IF NOT EXISTS idx_drivers_subcontractor ON drivers(subcontractor_id) WHERE subcontractor_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_drivers_status ON drivers(employment_status);
 CREATE INDEX IF NOT EXISTS idx_drivers_profile_photo ON drivers(profile_photo_url);
 CREATE INDEX IF NOT EXISTS idx_drivers_glovo_id ON drivers(glovo_courier_id);
@@ -233,6 +260,57 @@ CREATE TABLE IF NOT EXISTS driver_payouts (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS subcontractor_rent_charges (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    subcontractor_id UUID NOT NULL REFERENCES subcontractors(id) ON DELETE CASCADE,
+    period_start DATE NOT NULL,
+    period_end DATE NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'invoiced', 'paid', 'waived')),
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_subcontractor_rent_charge_period UNIQUE (organization_id, subcontractor_id, period_start, period_end)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_rent_charges_org_period ON subcontractor_rent_charges(organization_id, period_start, period_end);
+
+-- Payment tracking only; financial totals are SUM(driver_payouts.*), not stored here.
+CREATE TABLE IF NOT EXISTS subcontractor_payouts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    subcontractor_id UUID NOT NULL REFERENCES subcontractors(id) ON DELETE CASCADE,
+    payment_period_start DATE NOT NULL,
+    payment_period_end DATE NOT NULL,
+    payment_status VARCHAR(30) NOT NULL DEFAULT 'pending'
+        CHECK (payment_status IN ('pending', 'paid', 'partial', 'overdue', 'cancelled')),
+    payment_date DATE,
+    payment_method VARCHAR(50),
+    payment_reference VARCHAR(150),
+    paid_amount NUMERIC(12, 2),
+    notes TEXT,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_subcontractor_payout_period UNIQUE (
+        organization_id, subcontractor_id, payment_period_start, payment_period_end
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_payouts_org_period
+    ON subcontractor_payouts(organization_id, payment_period_start, payment_period_end);
+CREATE INDEX IF NOT EXISTS idx_sub_payouts_org_status
+    ON subcontractor_payouts(organization_id, payment_status);
+CREATE INDEX IF NOT EXISTS idx_sub_payouts_subcontractor
+    ON subcontractor_payouts(subcontractor_id);
+
+ALTER TABLE driver_payouts
+    ADD COLUMN IF NOT EXISTS subcontractor_payout_id UUID REFERENCES subcontractor_payouts(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_driver_payouts_sub_payout
+    ON driver_payouts(subcontractor_payout_id) WHERE subcontractor_payout_id IS NOT NULL;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_earnings_imports_org ON earnings_imports(organization_id);
@@ -477,8 +555,16 @@ DECLARE
   v_total NUMERIC(12, 2);
   v_vehicle_id UUID;
   daily_rent NUMERIC(10, 2);
+  sub_id UUID;
 BEGIN
   IF NEW.driver_id IS NULL OR NEW.trip_date IS NULL THEN
+    NEW.vehicle_rental_id := NULL;
+    NEW.vehicle_rental_fee := NULL;
+    RETURN NEW;
+  END IF;
+
+  SELECT d.subcontractor_id INTO sub_id FROM drivers d WHERE d.id = NEW.driver_id;
+  IF sub_id IS NOT NULL THEN
     NEW.vehicle_rental_id := NULL;
     NEW.vehicle_rental_fee := NULL;
     RETURN NEW;
@@ -528,7 +614,8 @@ CREATE OR REPLACE FUNCTION calculate_rental_fee(
   p_organization_id UUID,
   p_driver_id UUID,
   p_week_start DATE,
-  p_week_end DATE
+  p_week_end DATE,
+  p_ignore_subcontractor BOOLEAN DEFAULT false
 ) RETURNS NUMERIC AS $$
 DECLARE
   sum_fee NUMERIC(14, 6) := 0;
@@ -538,6 +625,15 @@ DECLARE
   daily_amt NUMERIC(14, 6);
   piece NUMERIC(14, 6);
 BEGIN
+  IF NOT p_ignore_subcontractor THEN
+    IF EXISTS (
+      SELECT 1 FROM drivers d
+      WHERE d.id = p_driver_id AND d.subcontractor_id IS NOT NULL
+    ) THEN
+      RETURN 0;
+    END IF;
+  END IF;
+
   FOR rec IN
     SELECT
       vr.rental_start_date,
@@ -582,8 +678,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
-COMMENT ON FUNCTION calculate_rental_fee(UUID, UUID, DATE, DATE) IS
-  'Fleet-week vehicle rent: sums prorated overlap with payment period (weekly uses amount * days / 7).';
+COMMENT ON FUNCTION calculate_rental_fee(UUID, UUID, DATE, DATE, BOOLEAN) IS
+  'Fleet-week vehicle rent for driver payroll. Returns 0 when driver is sub-managed unless p_ignore_subcontractor is true.';
 
 -- Per-rental breakdown of calculate_rental_fee math. Returns one row per contributing
 -- rental with its prorated piece. Sum of rows for the same (org, driver, week) equals
@@ -601,6 +697,12 @@ DECLARE
   daily_amt NUMERIC(14, 6);
   piece NUMERIC(14, 6);
 BEGIN
+  IF EXISTS (
+    SELECT 1 FROM drivers d WHERE d.id = p_driver_id AND d.subcontractor_id IS NOT NULL
+  ) THEN
+    RETURN;
+  END IF;
+
   FOR rec IN
     SELECT vr.id, vr.rental_start_date, vr.rental_end_date, vr.rental_type,
            vr.total_rent_amount, vr.vehicle_id
@@ -659,6 +761,12 @@ DECLARE
     daily_amt NUMERIC(14, 6);
     piece NUMERIC(14, 6);
 BEGIN
+    IF EXISTS (
+      SELECT 1 FROM drivers d WHERE d.id = p_driver_id AND d.subcontractor_id IS NOT NULL
+    ) THEN
+      RETURN;
+    END IF;
+
     FOR rec IN
         SELECT vr.id, vr.rental_start_date, vr.rental_end_date, vr.rental_type,
                vr.total_rent_amount, vr.vehicle_id
@@ -710,6 +818,182 @@ $$ LANGUAGE plpgsql STABLE;
 COMMENT ON FUNCTION allocate_vehicle_rent_pieces(UUID, UUID, DATE, DATE, BOOLEAN) IS
     'Fleet-week proration per rental; active-only vs active+completed via flag (matches calculate_rental_fee math).';
 
+CREATE OR REPLACE FUNCTION refresh_subcontractor_rent_charges(
+  p_organization_id UUID,
+  p_period_start DATE,
+  p_period_end DATE
+) RETURNS INTEGER AS $$
+DECLARE
+  n INT := 0;
+  r RECORD;
+  amt NUMERIC(12, 2);
+BEGIN
+  FOR r IN
+    SELECT s.id AS subcontractor_id
+    FROM subcontractors s
+    WHERE s.organization_id = p_organization_id
+      AND s.status = 'active'
+  LOOP
+    SELECT ROUND(COALESCE(SUM(
+      calculate_rental_fee(p_organization_id, d.id, p_period_start, p_period_end, true)
+    ), 0)::numeric, 2) INTO amt
+    FROM drivers d
+    WHERE d.organization_id = p_organization_id
+      AND d.subcontractor_id = r.subcontractor_id;
+
+    IF COALESCE(amt, 0) = 0 THEN
+      DELETE FROM subcontractor_rent_charges c
+      WHERE c.organization_id = p_organization_id
+        AND c.subcontractor_id = r.subcontractor_id
+        AND c.period_start = p_period_start
+        AND c.period_end = p_period_end;
+    ELSE
+      INSERT INTO subcontractor_rent_charges (
+        organization_id, subcontractor_id, period_start, period_end, amount, status, notes
+      ) VALUES (
+        p_organization_id, r.subcontractor_id, p_period_start, p_period_end, amt, 'pending',
+        'Prorated vehicle rent for sub-managed drivers (period)'
+      )
+      ON CONFLICT (organization_id, subcontractor_id, period_start, period_end)
+      DO UPDATE SET
+        amount = EXCLUDED.amount,
+        updated_at = NOW();
+    END IF;
+    n := n + 1;
+  END LOOP;
+
+  RETURN n;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION refresh_subcontractor_rent_charges(UUID, DATE, DATE) IS
+  'Rebuild subcontractor_rent_charges for all active subs in an org for the given inclusive period.';
+
+CREATE OR REPLACE FUNCTION subcontractor_settlement_totals(
+    p_organization_id UUID,
+    p_period_start DATE,
+    p_period_end DATE
+) RETURNS TABLE (
+    subcontractor_id UUID,
+    driver_payout_count INT,
+    total_gross_income NUMERIC(12, 2),
+    total_tips NUMERIC(12, 2),
+    total_commission NUMERIC(12, 2),
+    total_vehicle_rent NUMERIC(12, 2),
+    total_account_opening_fee NUMERIC(12, 2),
+    total_platform_fees NUMERIC(12, 2),
+    total_daily_cash NUMERIC(12, 2),
+    total_payable NUMERIC(12, 2)
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT d.subcontractor_id,
+           COUNT(*)::int,
+           ROUND(COALESCE(SUM(dp.total_gross_earnings), 0)::numeric, 2),
+           ROUND(COALESCE(SUM(dp.tips), 0)::numeric, 2),
+           ROUND(COALESCE(SUM(dp.company_commission), 0)::numeric, 2),
+           ROUND(COALESCE(SUM(dp.vehicle_rental_fee), 0)::numeric, 2),
+           ROUND(COALESCE(SUM(dp.account_opening_fee), 0)::numeric, 2),
+           ROUND(COALESCE(SUM(dp.total_platform_fees), 0)::numeric, 2),
+           ROUND(COALESCE(SUM(dp.total_daily_cash), 0)::numeric, 2),
+           ROUND(COALESCE(SUM(dp.net_driver_payout), 0)::numeric, 2)
+    FROM driver_payouts dp
+    INNER JOIN drivers d
+      ON d.id = dp.driver_id
+     AND d.organization_id = dp.organization_id
+    WHERE dp.organization_id = p_organization_id
+      AND dp.payment_period_start = p_period_start
+      AND dp.payment_period_end = p_period_end
+      AND d.subcontractor_id IS NOT NULL
+    GROUP BY d.subcontractor_id;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+COMMENT ON FUNCTION subcontractor_settlement_totals(UUID, DATE, DATE) IS
+    'Per-subcontractor SUM of driver_payouts for the period. total_commission = SUM(company_commission); total_payable = SUM(net_driver_payout). subcontractor_payouts has no commission columns.';
+
+CREATE OR REPLACE FUNCTION refresh_subcontractor_payouts(
+    p_organization_id UUID,
+    p_period_start DATE,
+    p_period_end DATE
+) RETURNS INTEGER AS $$
+DECLARE
+    n INT := 0;
+    r RECORD;
+    sp_id UUID;
+BEGIN
+    DELETE FROM subcontractor_payouts sp
+    WHERE sp.organization_id = p_organization_id
+      AND sp.payment_period_start = p_period_start
+      AND sp.payment_period_end = p_period_end
+      AND NOT EXISTS (
+          SELECT 1
+          FROM driver_payouts dp
+          INNER JOIN drivers d
+            ON d.id = dp.driver_id
+           AND d.organization_id = dp.organization_id
+           AND d.subcontractor_id = sp.subcontractor_id
+          WHERE dp.organization_id = p_organization_id
+            AND dp.payment_period_start = p_period_start
+            AND dp.payment_period_end = p_period_end
+      );
+
+    FOR r IN
+        SELECT DISTINCT d.subcontractor_id AS sid
+        FROM driver_payouts dp
+        INNER JOIN drivers d
+          ON d.id = dp.driver_id
+         AND d.organization_id = dp.organization_id
+        WHERE dp.organization_id = p_organization_id
+          AND dp.payment_period_start = p_period_start
+          AND dp.payment_period_end = p_period_end
+          AND d.subcontractor_id IS NOT NULL
+    LOOP
+        INSERT INTO subcontractor_payouts (
+            organization_id,
+            subcontractor_id,
+            payment_period_start,
+            payment_period_end
+        ) VALUES (
+            p_organization_id,
+            r.sid,
+            p_period_start,
+            p_period_end
+        )
+        ON CONFLICT ON CONSTRAINT uq_subcontractor_payout_period
+        DO UPDATE SET updated_at = NOW()
+        RETURNING id INTO sp_id;
+
+        UPDATE driver_payouts dp
+        SET subcontractor_payout_id = sp_id
+        FROM drivers d
+        WHERE d.id = dp.driver_id
+          AND d.organization_id = dp.organization_id
+          AND d.subcontractor_id = r.sid
+          AND dp.organization_id = p_organization_id
+          AND dp.payment_period_start = p_period_start
+          AND dp.payment_period_end = p_period_end;
+        n := n + 1;
+    END LOOP;
+
+    UPDATE driver_payouts dp
+    SET subcontractor_payout_id = NULL
+    FROM drivers d
+    WHERE d.id = dp.driver_id
+      AND d.organization_id = dp.organization_id
+      AND dp.organization_id = p_organization_id
+      AND dp.payment_period_start = p_period_start
+      AND dp.payment_period_end = p_period_end
+      AND d.subcontractor_id IS NULL
+      AND dp.subcontractor_payout_id IS NOT NULL;
+
+    RETURN n;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION refresh_subcontractor_payouts(UUID, DATE, DATE) IS
+    'Ensure payment-tracking subcontractor_payouts rows exist and link sub-managed driver_payouts; does not store financial totals.';
+
 CREATE OR REPLACE FUNCTION refresh_driver_payout_vehicle_fees(p_org_id UUID)
 RETURNS INTEGER AS $$
 DECLARE
@@ -729,7 +1013,7 @@ BEGIN
   FROM (
     SELECT
       id,
-      calculate_rental_fee(organization_id, driver_id, payment_period_start, payment_period_end)::numeric AS calc
+      calculate_rental_fee(organization_id, driver_id, payment_period_start, payment_period_end, false)::numeric AS calc
     FROM driver_payouts
     WHERE organization_id = p_org_id
   ) rf
@@ -740,7 +1024,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Earnings payout: net income (gross + tips ± taxa) minus fleet commission minus **magnitude** of daily cash.
+-- Earnings payout: platform net minus fleet commission minus **magnitude** of daily cash.
 CREATE OR REPLACE FUNCTION trg_enforce_driver_payout_after_cash()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -756,7 +1040,11 @@ BEGIN
       COALESCE(NEW.gross_earnings, 0) + COALESCE(NEW.tips, 0) - COALESCE(NEW.platform_fee, 0)
   END;
 
-  payout := ROUND((ni - COALESCE(NEW.company_commission, 0) - ABS(COALESCE(NEW.daily_cash, 0)))::numeric, 2);
+  payout := ROUND((
+    ni
+    - COALESCE(NEW.company_commission, 0)
+    - ABS(COALESCE(NEW.daily_cash, 0))
+  )::numeric, 2);
 
   NEW.driver_payout := payout;
   NEW.net_earnings := payout;

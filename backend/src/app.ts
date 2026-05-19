@@ -9,6 +9,8 @@ import { vehicleRoutes } from "./modules/vehicles/routes";
 import { vehicleDocumentRoutes } from "./modules/vehicleDocuments/routes";
 import { earningsRoutes } from "./modules/earnings/routes";
 import { importEarningsCsvRoutes } from "./modules/import/earningsCsvRoutes";
+import { subcontractorRoutes } from "./modules/subcontractors/routes";
+import { subcontractorPayoutRoutes } from "./modules/subcontractorPayouts/routes";
 
 export const app = express();
 
@@ -32,6 +34,8 @@ app.use("/api/earnings", earningsRoutes);
 app.use("/api/import", importEarningsCsvRoutes);
 app.use("/api/vehicles", vehicleRoutes);
 app.use("/api/vehicles", vehicleDocumentRoutes);
+app.use("/api/subcontractors", subcontractorRoutes);
+app.use("/api/subcontractor-payouts", subcontractorPayoutRoutes);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });

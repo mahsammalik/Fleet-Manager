@@ -108,9 +108,11 @@ export async function runEarningsCommitFromStaging(
 
   const index = await loadMatchIndex(orgId);
   const driversRes = await client.query<DriverMatchRow & { id: string }>(
-    `SELECT id, phone, uber_driver_id, bolt_driver_id, glovo_courier_id, bolt_courier_id, wolt_courier_id,
-            commission_type, commission_rate::text, fixed_commission_amount::text, minimum_commission::text
-     FROM drivers WHERE organization_id = $1`,
+    `SELECT d.id, d.phone, d.uber_driver_id, d.bolt_driver_id, d.glovo_courier_id, d.bolt_courier_id, d.wolt_courier_id,
+            d.commission_type, d.commission_rate::text, d.fixed_commission_amount::text, d.minimum_commission::text,
+            d.subcontractor_id::text
+     FROM drivers d
+     WHERE d.organization_id = $1`,
     [orgId],
   );
   const driverById = new Map(driversRes.rows.map((d) => [d.id, d]));
@@ -315,10 +317,10 @@ export async function runEarningsCommitFromStaging(
         ) VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12,
           ROUND((
             $9::numeric - ABS($11::numeric)
-            - calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date)
+            - calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date, false)
           )::numeric, 2),
           0, 0, 0, 0,
-          calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date),
+          calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date, false),
           'pending',
           $13, $14, $15, $16, $17)
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
@@ -336,9 +338,9 @@ export async function runEarningsCommitFromStaging(
             - ABS(
               COALESCE(driver_payouts.account_opening_fee, 0) + COALESCE(EXCLUDED.account_opening_fee, 0)
             )
-            - calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date)
+            - calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date, false)
           )::numeric, 2),
-          vehicle_rental_fee = calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date),
+          vehicle_rental_fee = calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date, false),
           gross_income = COALESCE(driver_payouts.gross_income, 0) + EXCLUDED.gross_income,
           net_income = COALESCE(driver_payouts.net_income, 0) + EXCLUDED.net_income,
           commission_base = COALESCE(driver_payouts.commission_base, 0) + EXCLUDED.commission_base,
@@ -405,6 +407,18 @@ export async function runEarningsCommitFromStaging(
   }
 
   await client.query(`DELETE FROM earnings_import_staging WHERE import_id = $1`, [importId]);
+
+  await client.query(`SELECT refresh_subcontractor_rent_charges($1::uuid, $2::date, $3::date)`, [
+    orgId,
+    weekStartEff,
+    weekEndEff,
+  ]);
+
+  await client.query(`SELECT refresh_subcontractor_payouts($1::uuid, $2::date, $3::date)`, [
+    orgId,
+    weekStartEff,
+    weekEndEff,
+  ]);
 
   return {
     insertedRows: toInsert.length,

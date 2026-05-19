@@ -101,13 +101,16 @@ function payoutGlovoBreakdownTitle(row: PayoutListItem): string | undefined {
     `Platform fees (Taxa): ${formatCurrency(toNum(row.total_platform_fees))}`,
     `Net income: ${formatCurrency(toNum(row.net_income))}`,
     `Commission base (${baseLabel}): ${formatCurrency(toNum(row.commission_base))}`,
-    `Commission (${pctLabel} nominal): ${formatCurrency(toNum(row.company_commission))}`,
+    `Nominal commission rate: ${pctLabel}`,
+    `Commission (fleet): ${formatCurrency(toNum(row.company_commission))}`,
     `Daily cash deduction: ${formatCurrency(Math.abs(toNum(row.total_daily_cash)))} (stored sum may be signed)`,
     `Account opening fee deduction: ${formatCurrency(Math.abs(toNum(row.account_opening_fee)))}`,
     `Vehicle rent (fleet week prorated): ${formatCurrency(toNum(row.vehicle_rental_fee))}`,
     `Raw period roll-up (after opening fee and vehicle rent): ${formatCurrency(toNum(row.raw_net_amount))}`,
     `Net payable: ${formatCurrency(toNum(row.net_driver_payout))}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** Tooltip for vehicle rent column (line items when present). */
@@ -188,6 +191,7 @@ export function DriverPayoutTable({
 
   const hasQuery = searchQuery.trim().length > 0 || statusFilter.length > 0;
   const isPayableRow = useCallback((r: PayoutListItem) => {
+    if (r.subcontractor_id || r.subcontractor_payout_id) return false;
     const debtLike = r.payment_status === "debt" || toNum(r.raw_net_amount) < 0;
     return r.payment_status === "pending" && !debtLike;
   }, []);
@@ -348,7 +352,7 @@ export function DriverPayoutTable({
                   <th className="px-3 py-2">Driver</th>
                   <th className="px-3 py-2">Period</th>
                   <th className="px-3 py-2 text-right">Gross</th>
-                  <th className="px-3 py-2 text-right">Commission</th>
+                  <th className="px-3 py-2 text-right">Fleet / Sub</th>
                   <th className="px-3 py-2 text-right">Net Payout</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Vehicle Rental</th>
@@ -386,6 +390,22 @@ export function DriverPayoutTable({
                           <div className="font-medium">
                             <HighlightText text={`${row.first_name} ${row.last_name}`} query={debouncedQuery} />
                           </div>
+                          {(row.subcontractor_id || row.subcontractor_payout_id) && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              <span className="inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-800">
+                                Via subcontractor
+                              </span>
+                              {row.subcontractor_legal_name && (
+                                <span className="text-[10px] text-violet-700">{row.subcontractor_legal_name}</span>
+                              )}
+                              <Link
+                                to="/earnings/subcontractors/settlements"
+                                className="text-[10px] text-sky-700 hover:underline"
+                              >
+                                Settlements
+                              </Link>
+                            </div>
+                          )}
                           <div className="text-xs text-slate-500">
                             <HighlightText text={row.phone || "No phone"} query={debouncedQuery} />
                           </div>
@@ -406,7 +426,7 @@ export function DriverPayoutTable({
                           className="px-3 py-3 text-right tabular-nums text-slate-800"
                           title={payoutCommissionTitle(row)}
                         >
-                          {formatCurrency(toNum(row.company_commission))}
+                          <div>{formatCurrency(toNum(row.company_commission))}</div>
                         </td>
                         <td className="px-3 py-3 text-right" title={payoutGlovoBreakdownTitle(row)}>
                           <div className="text-lg font-bold tabular-nums text-slate-900">
@@ -680,7 +700,7 @@ export function DriverPayoutTable({
                   <p className="mt-2 flex flex-wrap justify-between gap-2 text-xs tabular-nums text-slate-700">
                     <span>Gross {formatCurrency(toNum(row.total_gross_earnings))}</span>
                     <span title={payoutCommissionTitle(row)}>
-                      Comm {formatCurrency(toNum(row.company_commission))}
+                      Fleet {formatCurrency(toNum(row.company_commission))}
                     </span>
                   </p>
                   <div className="mt-1 flex items-center justify-between gap-2" title={payoutGlovoBreakdownTitle(row)}>

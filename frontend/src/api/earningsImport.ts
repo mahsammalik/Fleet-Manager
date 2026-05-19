@@ -75,6 +75,7 @@ export interface EarningsCommitResponse {
     fee: number;
     net: number;
     comm: number;
+    sub_comm?: number;
     payout: number;
     trips: number;
   };

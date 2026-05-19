@@ -748,6 +748,8 @@ type PayoutReportFilters = {
   q: string | null;
   driverId: string | null;
   minVehicleRental: number | null;
+  /** When true, hide sub-managed drivers from list (unless driverId is set). */
+  excludeSubcontractorManaged: boolean;
 };
 
 type PayoutFilterQuery = Record<string, unknown>;
@@ -779,7 +781,13 @@ function parsePayoutReportFilters(queryParams: PayoutFilterQuery): PayoutReportF
   const minVehicleRental =
     Number.isFinite(minVehicleRentalRaw) && minVehicleRentalRaw >= 0 ? minVehicleRentalRaw : null;
 
-  return { status, from, to, q, driverId, minVehicleRental };
+  const excludeRaw = queryParams.excludeSubcontractorManaged;
+  const excludeSubcontractorManaged =
+    excludeRaw === undefined || excludeRaw === null || excludeRaw === ""
+      ? true
+      : String(excludeRaw).toLowerCase() !== "false";
+
+  return { status, from, to, q, driverId, minVehicleRental, excludeSubcontractorManaged };
 }
 
 function buildPayoutReportWhereClause(orgId: string, filters: PayoutReportFilters) {
@@ -813,6 +821,9 @@ function buildPayoutReportWhereClause(orgId: string, filters: PayoutReportFilter
   if (filters.minVehicleRental != null) {
     where.push(`COALESCE(dp.vehicle_rental_fee, 0) >= $${p++}::numeric`);
     params.push(filters.minVehicleRental);
+  }
+  if (filters.excludeSubcontractorManaged && !filters.driverId) {
+    where.push(`d.subcontractor_id IS NULL`);
   }
 
   return { whereSql: where.join(" AND "), params, nextParamIndex: p };
@@ -957,6 +968,9 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
             dp.raw_net_amount::text, dp.debt_amount::text, dp.debt_applied_amount::text, dp.remaining_debt_amount::text,
             dp.total_gross_earnings::text, dp.income::text, dp.tips::text, dp.total_platform_fees::text,
             dp.total_daily_cash::text, dp.account_opening_fee::text, dp.company_commission::text,
+            dp.subcontractor_payout_id::text,
+            d.subcontractor_id::text,
+            s.legal_name AS subcontractor_legal_name,
             dp.gross_income::text, dp.net_income::text, dp.commission_base::text,
             dp.commission_rate::text, dp.commission_base_type,
             dp.vehicle_rental_fee::text,
@@ -981,6 +995,7 @@ async function fetchPayoutList(orgId: string, filters: PayoutReportFilters, page
             er_plat.platform AS earnings_platform
      FROM driver_payouts dp
      INNER JOIN drivers d ON d.id = dp.driver_id
+     LEFT JOIN subcontractors s ON s.id = d.subcontractor_id AND s.organization_id = d.organization_id
      LEFT JOIN LATERAL (
        SELECT er.platform
        FROM earnings_records er
@@ -1147,6 +1162,12 @@ router.get("/payouts/with-proration-details", async (req, res) => {
       params.push(qSearch);
       p++;
     }
+    const excludeSubManaged =
+      req.query.excludeSubcontractorManaged === undefined ||
+      String(req.query.excludeSubcontractorManaged).toLowerCase() !== "false";
+    if (excludeSubManaged && !driverIdFilter) {
+      where.push(`d.subcontractor_id IS NULL`);
+    }
     const whereSql = where.join(" AND ");
     params.push(pageSize, offset);
 
@@ -1228,6 +1249,27 @@ router.patch("/payouts/bulk", async (req, res) => {
   const setPaidDate = paymentStatus === "paid";
   const blockPayableTransition = paymentStatus === "paid" || paymentStatus === "approved";
 
+  if (blockPayableTransition) {
+    const blockedRes = await pool.query<{ id: string }>(
+      `SELECT dp.id::text
+       FROM driver_payouts dp
+       INNER JOIN drivers d ON d.id = dp.driver_id AND d.organization_id = dp.organization_id
+       WHERE dp.organization_id = $1::uuid
+         AND dp.id = ANY($2::uuid[])
+         AND (
+           dp.subcontractor_payout_id IS NOT NULL
+           OR d.subcontractor_id IS NOT NULL
+         )`,
+      [orgId, ids],
+    );
+    if (blockedRes.rows.length > 0) {
+      return res.status(400).json({
+        message: "Sub-managed driver payouts must be paid via subcontractor settlement.",
+        blockedIds: blockedRes.rows.map((r) => r.id),
+      });
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -1240,6 +1282,7 @@ router.patch("/payouts/bulk", async (req, res) => {
            transaction_ref = COALESCE($5, transaction_ref)
        WHERE dp.organization_id = $1
          AND dp.id = ANY($6::uuid[])
+         AND dp.subcontractor_payout_id IS NULL
          AND (
            NOT $8::boolean
            OR (
@@ -1905,6 +1948,99 @@ router.get("/reports/export", async (req, res) => {
     // eslint-disable-next-line no-console
     console.error("Earnings export error", err);
     return res.status(500).json({ message: "Export failed" });
+  }
+});
+
+router.get("/subcontractors/settlements", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  const { periodStart, periodEnd } = req.query as { periodStart?: string; periodEnd?: string };
+  if (!periodStart || !periodEnd) {
+    return res.status(400).json({ message: "periodStart and periodEnd are required (YYYY-MM-DD)" });
+  }
+  try {
+    const { rows } = await query<{
+      id: string | null;
+      subcontractor_id: string;
+      legal_name: string;
+      status: string;
+      total_gross_income: string;
+      total_tips: string;
+      total_platform_fees: string;
+      total_commission: string;
+      total_account_opening_fee: string;
+      total_vehicle_rent: string;
+      total_daily_cash: string;
+      driver_payout_count: number | null;
+      total_payable: string | null;
+      amount_payable: string | null;
+      payment_status: string | null;
+      payment_date: string | null;
+      paid_amount: string | null;
+    }>(
+      `SELECT sp.id::text,
+              s.id::text AS subcontractor_id,
+              s.legal_name,
+              s.status::text,
+              COALESCE(st.total_gross_income, 0)::text AS total_gross_income,
+              COALESCE(st.total_tips, 0)::text AS total_tips,
+              COALESCE(st.total_commission, 0)::text AS total_commission,
+              COALESCE(st.total_vehicle_rent, 0)::text AS total_vehicle_rent,
+              COALESCE(st.total_account_opening_fee, 0)::text AS total_account_opening_fee,
+              COALESCE(st.total_platform_fees, 0)::text AS total_platform_fees,
+              COALESCE(st.total_daily_cash, 0)::text AS total_daily_cash,
+              st.driver_payout_count,
+              COALESCE(st.total_payable, 0)::text AS total_payable,
+              COALESCE(st.total_payable, 0)::text AS amount_payable,
+              COALESCE(sp.payment_status, 'pending') AS payment_status,
+              sp.payment_date::text,
+              sp.paid_amount::text
+       FROM subcontractors s
+       LEFT JOIN subcontractor_settlement_totals($1::uuid, $2::date, $3::date) st
+         ON st.subcontractor_id = s.id
+       LEFT JOIN subcontractor_payouts sp
+         ON sp.subcontractor_id = s.id
+        AND sp.organization_id = s.organization_id
+        AND sp.payment_period_start = $2::date
+        AND sp.payment_period_end = $3::date
+       WHERE s.organization_id = $1::uuid
+         AND (
+           st.subcontractor_id IS NOT NULL
+           OR EXISTS (
+             SELECT 1 FROM drivers d
+             WHERE d.organization_id = s.organization_id
+               AND d.subcontractor_id = s.id
+               AND (d.is_deleted = false OR d.is_deleted IS NULL)
+           )
+         )
+       ORDER BY s.legal_name ASC`,
+      [orgId, periodStart, periodEnd],
+    );
+    return res.json({ periodStart, periodEnd, rows });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Subcontractor settlements error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+router.post("/subcontractors/refresh-rent-charges", async (req, res) => {
+  const orgId = req.user?.orgId;
+  if (!orgId) return res.status(400).json({ message: "User is not associated with an organization" });
+  const { periodStart, periodEnd } = req.body as { periodStart?: string; periodEnd?: string };
+  if (!periodStart || !periodEnd) {
+    return res.status(400).json({ message: "periodStart and periodEnd are required" });
+  }
+  try {
+    const { rows } = await query<{ n: string }>(
+      `SELECT refresh_subcontractor_rent_charges($1::uuid, $2::date, $3::date)::text AS n`,
+      [orgId, periodStart, periodEnd],
+    );
+    return res.json({ updatedSubcontractors: parseInt(rows[0]?.n ?? "0", 10) });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("refresh-rent-charges error", err);
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 

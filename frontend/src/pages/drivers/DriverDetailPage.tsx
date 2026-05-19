@@ -292,6 +292,23 @@ export function DriverDetailPage() {
                   </dd>
                 </div>
                 <div><dt className="text-slate-500">Commission rate</dt><dd>{d.commission_rate ?? "—"}%</dd></div>
+                <div className="md:col-span-2">
+                  <dt className="text-slate-500">Subcontractor</dt>
+                  <dd>
+                    {d.subcontractor_id && d.subcontractor_legal_name ? (
+                      <>
+                        <Link
+                          to={`/subcontractors/${d.subcontractor_id}/edit`}
+                          className="font-medium text-sky-600 hover:text-sky-800"
+                        >
+                          {d.subcontractor_legal_name}
+                        </Link>
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </dd>
+                </div>
               </dl>
             </section>
 
