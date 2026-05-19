@@ -20,6 +20,10 @@ import { EarningsOverviewPage } from "./pages/earnings/EarningsOverviewPage";
 import { EarningsImportPage } from "./pages/earnings/EarningsImportPage";
 import { EarningsPayoutsPage } from "./pages/earnings/EarningsPayoutsPage";
 import { EarningsReportsPage } from "./pages/earnings/EarningsReportsPage";
+import { SubcontractorSettlementsPage } from "./pages/earnings/SubcontractorSettlementsPage";
+import { SubcontractorSettlementDetailPage } from "./pages/earnings/SubcontractorSettlementDetailPage";
+import { SubcontractorsListPage } from "./pages/subcontractors/SubcontractorsListPage";
+import { SubcontractorFormPage } from "./pages/subcontractors/SubcontractorFormPage";
 
 function ProtectedRoute({ children }: { children: React.ReactElement }) {
   const token = useAuthStore((s) => s.token);
@@ -143,6 +147,46 @@ export const appRouter = createBrowserRouter(
       element: (
         <ProtectedRoute>
           <EarningsReportsPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/earnings/subcontractors/settlements",
+      element: (
+        <ProtectedRoute>
+          <SubcontractorSettlementsPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/earnings/subcontractors/settlements/:id",
+      element: (
+        <ProtectedRoute>
+          <SubcontractorSettlementDetailPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/subcontractors",
+      element: (
+        <ProtectedRoute>
+          <SubcontractorsListPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/subcontractors/new",
+      element: (
+        <ProtectedRoute>
+          <SubcontractorFormPage />
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: "/subcontractors/:id/edit",
+      element: (
+        <ProtectedRoute>
+          <SubcontractorFormPage />
         </ProtectedRoute>
       ),
     },

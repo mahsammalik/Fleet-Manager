@@ -14,6 +14,7 @@ import {
   PLATFORM_ID_LABELS,
 } from "../../constants/platformIds";
 import { CommissionInput } from "../../components/drivers/CommissionInput";
+import { getSubcontractors } from "../../api/subcontractors";
 import { DocumentUpload } from "../../components/documents/DocumentUpload";
 import { DocumentList } from "../../components/documents/DocumentList";
 
@@ -57,7 +58,7 @@ function driverToForm(
     licenseClass: d.license_class ?? "",
     hireDate: toDateInputValue(d.hire_date),
     employmentStatus: (d.employment_status as "active" | "suspended" | "terminated") ?? "active",
-    commissionRate: d.commission_rate != null ? Number(d.commission_rate) : 20,
+    commissionRate: d.commission_rate != null ? Number(d.commission_rate) : 10,
     commissionType,
     fixedCommissionAmount:
       d.fixed_commission_amount != null ? Number(d.fixed_commission_amount) : 0,
@@ -69,6 +70,7 @@ function driverToForm(
     boltCourierId: d.bolt_courier_id ?? "",
     woltCourierId: d.wolt_courier_id ?? "",
     notes: d.notes ?? "",
+    subcontractorId: d.subcontractor_id ?? "",
   };
 }
 
@@ -84,6 +86,11 @@ export function EditDriverPage() {
     fixedCommissionAmount: number;
     minimumCommission: number;
   }) | null>(null);
+
+  const subsQ = useQuery({
+    queryKey: ["subcontractors"],
+    queryFn: () => getSubcontractors().then((r) => r.data),
+  });
 
   const {
     data: driverResponse,
@@ -161,7 +168,7 @@ export function EditDriverPage() {
       licenseClass: form.licenseClass?.trim() || undefined,
       hireDate: form.hireDate?.trim() || undefined,
       employmentStatus: form.employmentStatus ?? "active",
-      commissionRate: form.commissionRate ?? 20,
+      commissionRate: form.commissionRate ?? 10,
       commissionType: form.commissionType ?? "percentage",
       fixedCommissionAmount: form.fixedCommissionAmount ?? 0,
       minimumCommission: form.minimumCommission ?? 0,
@@ -171,6 +178,7 @@ export function EditDriverPage() {
       boltCourierId: form.boltCourierId?.trim() || undefined,
       woltCourierId: form.woltCourierId?.trim() || undefined,
       notes: form.notes?.trim() || undefined,
+      subcontractorId: form.subcontractorId?.trim() ? form.subcontractorId.trim() : null,
     };
     mutation.mutate(payload);
   };
@@ -182,7 +190,9 @@ export function EditDriverPage() {
       | "fixedCommissionAmount"
       | "minimumCommission"
       | "glovoCourierId"
-      | "boltCourierId",
+      | "boltCourierId"
+      | "woltCourierId"
+      | "subcontractorId",
     value: string | number | undefined
   ) => {
     setForm((prev) => (prev ? { ...prev, [key]: value } : null));
@@ -370,6 +380,26 @@ export function EditDriverPage() {
                   ))}
                 </select>
               </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-1">Subcontractor (optional)</label>
+                <select
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  value={form.subcontractorId ?? ""}
+                  onChange={(e) => update("subcontractorId", e.target.value)}
+                >
+                  <option value="">None (direct)</option>
+                  {(subsQ.data ?? [])
+                    .filter((s) => s.status === "active")
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.legal_name}
+                      </option>
+                    ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Sub-managed: commission split from subcontractor record; vehicle rent billed to subcontractor.
+                </p>
+              </div>
             </div>
           </section>
 
@@ -377,7 +407,7 @@ export function EditDriverPage() {
             <h2 className="text-sm font-semibold text-slate-800 mb-3">Commission</h2>
             <CommissionInput
               commissionType={form.commissionType ?? "percentage"}
-              commissionRate={form.commissionRate ?? 20}
+              commissionRate={form.commissionRate ?? 10}
               fixedCommissionAmount={form.fixedCommissionAmount ?? 0}
               minimumCommission={form.minimumCommission ?? 0}
               onChange={(values) => {

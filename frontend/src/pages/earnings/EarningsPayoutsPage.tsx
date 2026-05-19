@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { useAuthStore } from "../../store/authStore";
 import {
@@ -42,6 +42,7 @@ export function EarningsPayoutsPage() {
   const [debtModalRow, setDebtModalRow] = useState<PayoutListItem | null>(null);
   const [debtActionMsg, setDebtActionMsg] = useState<string | null>(null);
   const [bulkDebtBusy, setBulkDebtBusy] = useState(false);
+  const [showSubManaged, setShowSubManaged] = useState(false);
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
@@ -53,7 +54,7 @@ export function EarningsPayoutsPage() {
   }, [debouncedQ]);
 
   const query = useQuery({
-    queryKey: ["earnings", "payouts", page, status, from, to, debouncedQ, driverIdFromUrl],
+    queryKey: ["earnings", "payouts", page, status, from, to, debouncedQ, driverIdFromUrl, showSubManaged],
     queryFn: () =>
       getEarningsPayouts({
         page,
@@ -63,6 +64,7 @@ export function EarningsPayoutsPage() {
         to: to || undefined,
         q: debouncedQ || undefined,
         driverId: driverIdFromUrl,
+        excludeSubcontractorManaged: driverIdFromUrl ? false : !showSubManaged,
       }).then((r) => r.data),
     enabled: user?.role === "admin" || user?.role === "accountant",
   });
@@ -71,7 +73,7 @@ export function EarningsPayoutsPage() {
   const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / (query.data?.pageSize ?? 25)));
 
   const detailsQuery = useQuery({
-    queryKey: ["earnings", "payout-proration-details", page, status, from, to, debouncedQ, driverIdFromUrl],
+    queryKey: ["earnings", "payout-proration-details", page, status, from, to, debouncedQ, driverIdFromUrl, showSubManaged],
     queryFn: () =>
       getPayoutsWithProrationDetails({
         page,
@@ -81,6 +83,7 @@ export function EarningsPayoutsPage() {
         to: to || undefined,
         q: debouncedQ || undefined,
         driverId: driverIdFromUrl,
+        excludeSubcontractorManaged: driverIdFromUrl ? false : !showSubManaged,
       }).then((r) => r.data),
     enabled: user?.role === "admin" || user?.role === "accountant",
   });
@@ -128,7 +131,13 @@ export function EarningsPayoutsPage() {
     <div className="flex flex-col flex-1 overflow-auto">
       <header className="shrink-0 border-b border-slate-200 bg-white/80 backdrop-blur-md px-4 sm:px-6 py-4">
         <h1 className="text-lg font-semibold text-slate-900">Payouts</h1>
-        <p className="text-sm text-slate-500 mt-1">Driver period rollups. Bulk mark as paid.</p>
+        <p className="text-sm text-slate-500 mt-1">
+          Direct driver payouts only. Sub-managed drivers are paid via{" "}
+          <Link to="/earnings/subcontractors/settlements" className="text-sky-700 hover:underline">
+            subcontractor settlements
+          </Link>
+          .
+        </p>
       </header>
 
       <div className="flex-1 p-4 sm:p-6 space-y-4">
@@ -293,6 +302,19 @@ export function EarningsPayoutsPage() {
               />
             </div>
           </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700 min-h-[44px] px-1">
+            <input
+              type="checkbox"
+              checked={showSubManaged}
+              disabled={!!driverIdFromUrl}
+              onChange={(e) => {
+                setShowSubManaged(e.target.checked);
+                setPage(1);
+              }}
+              className="rounded border-slate-300"
+            />
+            Show sub-managed (audit)
+          </label>
           <button
             type="button"
             className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50 min-h-[44px]"

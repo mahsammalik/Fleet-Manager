@@ -187,4 +187,21 @@ describe("calculatePayout", () => {
     expect(r.net_income).toBe(100);
     expect(r.driver_payout).toBeCloseTo(75, 5);
   });
+
+  it("sub-managed driver uses driver commission_rate like direct drivers", () => {
+    const r = calculatePayout({
+      income: 100,
+      tips: 0,
+      taxa_aplicatie: 0,
+      plata_zilnica_cash: 0,
+      transferTotal: null,
+      resolvedPlatformNet: 100,
+      driver: { ...driverPct10, subcontractor_id: "sub-uuid" },
+      commission_base_type: "net_income",
+    });
+    expect(r.commission_base).toBe(100);
+    expect(r.company_commission).toBeCloseTo(10, 5);
+    expect(r.driver_payout).toBeCloseTo(90, 5);
+    expect(r.commission_rate).toBeCloseTo(0.1, 5);
+  });
 });

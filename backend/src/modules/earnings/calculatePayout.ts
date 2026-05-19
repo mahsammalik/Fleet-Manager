@@ -126,7 +126,7 @@ export function driverCommissionRateAsFraction(driver: DriverCommissionRow): num
 
 /**
  * Fleet commission on {@link resolveFleetCommissionBase};
- * driver_payout = platform net_income − company_commission − **ABS(daily cash)** (cash is always a deduction magnitude).
+ * driver_payout = platform net_income − company_commission − **ABS(daily cash)**.
  */
 export function calculatePayout(input: CalculatePayoutInput): CalculatePayoutResult {
   const v = num(input.income);
@@ -135,6 +135,7 @@ export function calculatePayout(input: CalculatePayoutInput): CalculatePayoutRes
   const net_income = netIncomeFromGrossAndTaxa(gross_income, input.taxa_aplicatie);
   const dailyCashDeduction = Math.abs(num(input.plata_zilnica_cash));
   const commission_base = resolveFleetCommissionBase(input);
+
   const comm = computeCompanyCommissionFromBase(input.driver, commission_base);
   const driver_payout = roundMoney(net_income - comm.company_commission - dailyCashDeduction);
 

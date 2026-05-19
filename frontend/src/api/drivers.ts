@@ -21,6 +21,8 @@ export interface DriverListItem {
   current_vehicle_model?: string | null;
   current_vehicle_license_plate?: string | null;
   current_vehicle_year?: number | null;
+  subcontractor_id?: string | null;
+  subcontractor_legal_name?: string | null;
   vehicle?: {
     id: string;
     license_plate: string;
@@ -65,6 +67,8 @@ export interface Driver extends DriverListItem {
   wolt_courier_id?: string | null;
   wolt_courier_verified?: boolean;
   wolt_courier_verified_at?: string | null;
+  subcontractor_id?: string | null;
+  subcontractor_legal_name?: string | null;
 }
 
 export interface CreateDriverPayload {
@@ -90,6 +94,7 @@ export interface CreateDriverPayload {
   boltCourierId?: string;
   woltCourierId?: string;
   notes?: string;
+  subcontractorId?: string | null;
 }
 
 export interface GetDriversParams {

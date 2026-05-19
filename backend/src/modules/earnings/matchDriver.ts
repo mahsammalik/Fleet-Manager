@@ -15,6 +15,7 @@ export interface DriverMatchRow {
   commission_rate: string | null;
   fixed_commission_amount: string | null;
   minimum_commission: string | null;
+  subcontractor_id?: string | null;
 }
 
 function digits(s: string): string {

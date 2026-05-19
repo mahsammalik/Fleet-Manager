@@ -10,6 +10,9 @@ const router = Router();
 
 router.use(authenticateJWT);
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function appendDriverSearchCondition(conditions: string[], params: unknown[], rawSearch: string) {
   const term = rawSearch.trim();
   if (!term) return;
@@ -37,10 +40,12 @@ const DRIVER_LIST_SELECT = `
       SELECT d.id, d.first_name, d.last_name, d.phone, d.email, d.address, d.license_number,
              d.employment_status, d.commission_rate, d.profile_photo_url,
              d.uber_driver_id, d.bolt_driver_id, d.glovo_courier_id, d.bolt_courier_id, d.wolt_courier_id,
-             d.current_vehicle_id,
+             d.current_vehicle_id, d.subcontractor_id,
+             s.legal_name AS subcontractor_legal_name,
              v.license_plate AS current_vehicle_license_plate, v.make AS current_vehicle_make, v.model AS current_vehicle_model
       FROM drivers d
       LEFT JOIN vehicles v ON d.current_vehicle_id = v.id
+      LEFT JOIN subcontractors s ON s.id = d.subcontractor_id AND s.organization_id = d.organization_id
 `;
 
 router.get("/", async (req, res) => {
@@ -266,7 +271,8 @@ router.get("/:id", async (req, res) => {
              d.wolt_courier_verified, d.wolt_courier_verified_at, d.notes, d.profile_photo_url,
              d.profile_photo_updated_at, d.created_at, d.updated_at,
              d.is_deleted, d.deleted_at, d.deleted_by,
-             d.current_vehicle_id,
+             d.current_vehicle_id, d.subcontractor_id,
+             s.legal_name AS subcontractor_legal_name,
              v.make AS current_vehicle_make,
              v.model AS current_vehicle_model,
              v.license_plate AS current_vehicle_license_plate,
@@ -274,6 +280,7 @@ router.get("/:id", async (req, res) => {
              v.status AS current_vehicle_status
       FROM drivers d
       LEFT JOIN vehicles v ON d.current_vehicle_id = v.id AND v.organization_id = d.organization_id
+      LEFT JOIN subcontractors s ON s.id = d.subcontractor_id AND s.organization_id = d.organization_id
       WHERE d.id = $1 AND d.organization_id = $2 AND (d.is_deleted = false OR d.is_deleted IS NULL)
       LIMIT 1
       `,
@@ -404,6 +411,7 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
     boltCourierId,
     woltCourierId,
     notes,
+    subcontractorId,
   } = req.body as Record<string, unknown>;
 
   if (!firstName || !lastName || !phone) {
@@ -418,6 +426,22 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
     if (existing[0]) {
       return res.status(409).json({ message: "A driver with this license number already exists" });
     }
+  }
+
+  let subcontractorUuid: string | null = null;
+  if (subcontractorId != null && String(subcontractorId).trim() !== "") {
+    const sid = String(subcontractorId);
+    if (!UUID_RE.test(sid)) {
+      return res.status(400).json({ message: "Invalid subcontractorId" });
+    }
+    const { rows: subRows } = await query<{ ok: number }>(
+      `SELECT 1 AS ok FROM subcontractors WHERE id = $1::uuid AND organization_id = $2::uuid LIMIT 1`,
+      [sid, orgId],
+    );
+    if (!subRows[0]) {
+      return res.status(400).json({ message: "Subcontractor not found in this organization" });
+    }
+    subcontractorUuid = sid;
   }
 
   try {
@@ -446,14 +470,15 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
         glovo_courier_id,
         bolt_courier_id,
         wolt_courier_id,
+        subcontractor_id,
         notes
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, COALESCE($12, 'active'),
-        COALESCE($13, 20.0), COALESCE($14, 20.0),
+        COALESCE($13, 10.0), COALESCE($14, 10.0),
         COALESCE($15, 'percentage'), COALESCE($16, 0), COALESCE($17, 0),
-        $18, $19, $20, $21, $22, $23
+        $18, $19, $20, $21, $22, $23, $24
       )
       RETURNING *
       `,
@@ -480,6 +505,7 @@ router.post("/", requireRole("admin", "accountant"), async (req, res) => {
         glovoCourierId,
         boltCourierId,
         woltCourierId,
+        subcontractorUuid,
         notes,
       ],
     );
@@ -523,6 +549,7 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
     boltCourierId,
     woltCourierId,
     notes,
+    subcontractorId,
   } = req.body as Record<string, unknown>;
 
   if (licenseNumber) {
@@ -533,6 +560,22 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
     if (existing[0]) {
       return res.status(409).json({ message: "A driver with this license number already exists" });
     }
+  }
+
+  let subcontractorUuid: string | null = null;
+  if (subcontractorId != null && String(subcontractorId).trim() !== "") {
+    const sid = String(subcontractorId);
+    if (!UUID_RE.test(sid)) {
+      return res.status(400).json({ message: "Invalid subcontractorId" });
+    }
+    const { rows: subRows } = await query<{ ok: number }>(
+      `SELECT 1 AS ok FROM subcontractors WHERE id = $1::uuid AND organization_id = $2::uuid LIMIT 1`,
+      [sid, orgId],
+    );
+    if (!subRows[0]) {
+      return res.status(400).json({ message: "Subcontractor not found in this organization" });
+    }
+    subcontractorUuid = sid;
   }
 
   try {
@@ -561,9 +604,10 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
         wolt_courier_id = $19,
         glovo_courier_id = $20,
         bolt_courier_id = $21,
-        notes = $22,
+        subcontractor_id = $22,
+        notes = $23,
         updated_at = NOW()
-      WHERE id = $23 AND organization_id = $24
+      WHERE id = $24 AND organization_id = $25
       RETURNING *
       `,
       [
@@ -588,6 +632,7 @@ router.put("/:id", requireRole("admin", "accountant"), async (req, res) => {
         woltCourierId,
         glovoCourierId,
         boltCourierId,
+        subcontractorUuid,
         notes,
         id,
         orgId,

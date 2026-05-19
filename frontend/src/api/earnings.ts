@@ -82,12 +82,13 @@ export interface PayoutListItem {
   total_platform_fees: string | null;
   total_daily_cash: string | null;
   account_opening_fee: string | null;
-  /** Fleet commission (single: percent / fixed / hybrid of period net income). */
-  company_commission: string | null;
   /** Glovo ladder: income + tips (period sum). */
   gross_income: string | null;
   /** Glovo ladder: gross_income − taxa (period sum). */
   net_income: string | null;
+  /** Fleet commission (your cut). */
+  company_commission: string | null;
+  /** Subcontractor cut when driver is sub-managed. */
   commission_base: string | null;
   /** Fleet rate as decimal fraction (e.g. 0.2 for 20%). */
   commission_rate: string | null;
@@ -95,6 +96,9 @@ export interface PayoutListItem {
   first_name: string;
   last_name: string;
   phone: string | null;
+  subcontractor_id?: string | null;
+  subcontractor_payout_id?: string | null;
+  subcontractor_legal_name?: string | null;
 }
 
 export interface EarningsPayoutsResponse {
@@ -201,6 +205,7 @@ export function getEarningsPayouts(params: {
   to?: string;
   q?: string;
   driverId?: string;
+  excludeSubcontractorManaged?: boolean;
 }) {
   return api.get<EarningsPayoutsResponse>("/earnings/payouts", { params });
 }
@@ -236,6 +241,7 @@ export function getPayoutsWithProrationDetails(params: {
   to?: string;
   q?: string;
   driverId?: string;
+  excludeSubcontractorManaged?: boolean;
 }) {
   return api.get<{ items: PayoutProrationDetail[]; page: number; pageSize: number }>(
     "/earnings/payouts/with-proration-details",
@@ -385,4 +391,37 @@ export function getDebtHistory(driverId: string) {
       payment_status: string;
     }[];
   }>(`/earnings/debts/history/${encodeURIComponent(driverId)}`);
+}
+
+export interface SubcontractorSettlementRow {
+  id: string | null;
+  subcontractor_id: string;
+  legal_name: string;
+  status: string;
+  driver_payout_count: number | null;
+  total_gross_income: string;
+  total_tips: string;
+  /** SUM(driver_payouts.company_commission) for the period. */
+  total_commission: string;
+  total_vehicle_rent: string;
+  total_account_opening_fee: string;
+  total_platform_fees: string;
+  total_daily_cash: string;
+  total_payable: string | null;
+  amount_payable: string | null;
+  payment_status: string | null;
+  payment_date: string | null;
+  /** Snapshot when settlement was marked paid. */
+  paid_amount: string | null;
+}
+
+export function getSubcontractorSettlements(params: { periodStart: string; periodEnd: string }) {
+  return api.get<{ periodStart: string; periodEnd: string; rows: SubcontractorSettlementRow[] }>(
+    "/earnings/subcontractors/settlements",
+    { params: { periodStart: params.periodStart, periodEnd: params.periodEnd } },
+  );
+}
+
+export function postRefreshSubcontractorRentCharges(body: { periodStart: string; periodEnd: string }) {
+  return api.post<{ updatedSubcontractors: number }>("/earnings/subcontractors/refresh-rent-charges", body);
 }

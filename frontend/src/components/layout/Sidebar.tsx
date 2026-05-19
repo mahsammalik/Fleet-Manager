@@ -13,6 +13,7 @@ const earningsSubItems = [
   { to: "/earnings/import", label: "Import" },
   { to: "/earnings/payouts", label: "Payouts" },
   { to: "/earnings/reports", label: "Reports" },
+  { to: "/earnings/subcontractors/settlements", label: "Sub settlements" },
 ];
 
 function DashboardIcon({ className }: { className?: string }) {
@@ -90,6 +91,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     { to: "/dashboard", label: "Dashboard", icon: DashboardIcon },
     { to: "/drivers", label: "Drivers", icon: DriversIcon },
     { to: "/vehicles", label: "Vehicles", icon: VehiclesIcon },
+    ...(showEarnings ? [{ to: "/subcontractors", label: "Subcontractors", icon: DriversIcon }] : []),
     ...(showRentalsStaffNav ? rentalsNavItemsForStaff.map((x) => ({ ...x })) : []),
   ];
   const [earningsOpen, setEarningsOpen] = useState(() => location.pathname.startsWith("/earnings"));

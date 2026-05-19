@@ -9,7 +9,11 @@
     "test": "vitest run",
     "start": "node dist/index.js",
     "import-earnings-csv": "ts-node --transpile-only scripts/import-earnings-csv.ts",
-    "recompute-payout-debt": "ts-node --transpile-only scripts/recompute-payout-debt-all.ts"
+    "recompute-payout-debt": "ts-node --transpile-only scripts/recompute-payout-debt-all.ts",
+    "migrate:055": "node scripts/apply-migration-055.mjs",
+    "migrate:058": "node scripts/apply-migration-058.mjs",
+    "migrate:057-059": "node scripts/apply-migrations-057-059.mjs",
+    "migrate:060-062": "node scripts/apply-migrations-060-062.mjs"
   },
   "keywords": [],
   "author": "",
