@@ -100,6 +100,8 @@ export interface GetVehiclesParams {
   status?: string;
   limit?: number;
   offset?: number;
+  sort_by?: string;
+  sort_order?: "asc" | "desc";
 }
 
 export function getVehicles(params?: GetVehiclesParams) {
@@ -108,7 +110,7 @@ export function getVehicles(params?: GetVehiclesParams) {
 
 export function searchVehicles(
   q: string,
-  params?: Pick<GetVehiclesParams, "status" | "limit" | "offset">,
+  params?: Pick<GetVehiclesParams, "status" | "limit" | "offset" | "sort_by" | "sort_order">,
 ) {
   return api.get<VehicleListItem[]>("/vehicles/search", { params: { q, ...params } });
 }

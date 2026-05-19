@@ -23,6 +23,7 @@ export interface DriverListItem {
   current_vehicle_year?: number | null;
   subcontractor_id?: string | null;
   subcontractor_legal_name?: string | null;
+  created_at?: string;
   vehicle?: {
     id: string;
     license_plate: string;
@@ -102,6 +103,8 @@ export interface GetDriversParams {
   status?: string;
   limit?: number;
   offset?: number;
+  sort_by?: string;
+  sort_order?: "asc" | "desc";
 }
 
 export interface GetDriverByIdParams {
@@ -119,7 +122,7 @@ export function getDrivers(params?: GetDriversParams) {
 /** Server-side driver search (`q` matches name, phone, IDs, address, status). */
 export function searchDrivers(
   q: string,
-  params?: Pick<GetDriversParams, "status" | "limit" | "offset">,
+  params?: Pick<GetDriversParams, "status" | "limit" | "offset" | "sort_by" | "sort_order">,
 ) {
   return api.get<DriverListItem[]>("/drivers/search", { params: { q, ...params } });
 }

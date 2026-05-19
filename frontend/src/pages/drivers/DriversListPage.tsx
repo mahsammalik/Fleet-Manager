@@ -4,16 +4,21 @@ import { Link } from "react-router-dom";
 import { deleteDriver, getDrivers, type DriverListItem } from "../../api/drivers";
 import { useAuthStore } from "../../store/authStore";
 import { DriversList } from "../../components/drivers/DriversList";
+import { useListSort } from "../../hooks/useListSort";
 
 export function DriversListPage() {
   const user = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<DriverListItem | null>(null);
+  const { sortParams, getHeaderProps } = useListSort();
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["drivers", "list"],
+    queryKey: ["drivers", "list", sortParams],
     queryFn: async () => {
-      const { data } = await getDrivers({ limit: 10_000 });
+      const { data } = await getDrivers({
+        limit: 10_000,
+        ...(sortParams ?? {}),
+      });
       return data;
     },
   });
@@ -55,6 +60,7 @@ export function DriversListPage() {
             isError={isError}
             userRole={user?.role}
             onDeleteRequest={setDeleteTarget}
+            getHeaderProps={getHeaderProps}
           />
           {deleteTarget && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
