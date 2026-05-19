@@ -5,6 +5,8 @@ import {
   PLATFORM_ID_LABELS,
 } from "../../constants/platformIds";
 import { useDriverSearch } from "../../hooks/useDriverSearch";
+import type { SortableHeaderProps } from "../../hooks/useListSort";
+import { SortableTableHeader } from "../UI/SortableTableHeader";
 import { DriverAvatar } from "./DriverAvatar";
 
 type DriversListProps = {
@@ -13,6 +15,7 @@ type DriversListProps = {
   isError: boolean;
   userRole?: string;
   onDeleteRequest: (driver: DriverListItem) => void;
+  getHeaderProps: (field: string) => SortableHeaderProps;
 };
 
 function SearchIcon({ className }: { className?: string }) {
@@ -42,6 +45,7 @@ export function DriversList({
   isError,
   userRole,
   onDeleteRequest,
+  getHeaderProps,
 }: DriversListProps) {
   const {
     searchQuery,
@@ -58,6 +62,7 @@ export function DriversList({
   const hasQuery = searchQuery.trim().length > 0;
   const showNoMatchEmpty = !isLoading && !isError && totalCount > 0 && filteredCount === 0 && !isFilterPending;
   const showEmptyOrg = !isLoading && !isError && totalCount === 0;
+  const colSpan = 9;
 
   return (
     <div className="space-y-4">
@@ -128,11 +133,12 @@ export function DriversList({
             <thead className="bg-slate-50">
               <tr>
                 <th className="px-3 py-2 text-left font-medium text-slate-700 w-12">Photo</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Name</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Phone</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
+                <SortableTableHeader label="Name" {...getHeaderProps("last_name")} />
+                <SortableTableHeader label="Phone" {...getHeaderProps("phone")} />
+                <SortableTableHeader label="Status" {...getHeaderProps("employment_status")} />
+                <SortableTableHeader label="Subcontractor" {...getHeaderProps("subcontractor_id")} />
                 <th className="px-3 py-2 text-left font-medium text-slate-700">Commission</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Vehicle</th>
+                <SortableTableHeader label="Vehicle" {...getHeaderProps("current_vehicle_id")} />
                 <th className="px-3 py-2 text-left font-medium text-slate-700">Uber/Bolt</th>
                 <th className="px-3 py-2 text-left font-medium text-slate-700">Actions</th>
               </tr>
@@ -160,6 +166,9 @@ export function DriversList({
                   </td>
                   <td className="px-3 py-2">{driver.phone}</td>
                   <td className="px-3 py-2 capitalize">{driver.employment_status}</td>
+                  <td className="px-3 py-2 text-slate-600">
+                    {driver.subcontractor_legal_name ?? "—"}
+                  </td>
                   <td className="px-3 py-2">{driver.commission_rate}%</td>
                   <td className="px-3 py-2 text-slate-600">
                     {driver.current_vehicle_id ? (
@@ -203,14 +212,14 @@ export function DriversList({
               ))}
               {showEmptyOrg && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={colSpan} className="px-3 py-10 text-center text-sm text-slate-500">
                     No drivers yet.
                   </td>
                 </tr>
               )}
               {showNoMatchEmpty && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={colSpan} className="px-3 py-10 text-center text-sm text-slate-500">
                     No drivers match your search. Try another name, phone number, or ID.
                   </td>
                 </tr>

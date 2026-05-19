@@ -1,7 +1,9 @@
 import { Link } from "react-router-dom";
 import type { VehicleListItem } from "../../api/vehicles";
 import { useVehicleSearch } from "../../hooks/useVehicleSearch";
+import type { SortableHeaderProps } from "../../hooks/useListSort";
 import { formatCurrency } from "../../utils/currency";
+import { SortableTableHeader } from "../UI/SortableTableHeader";
 
 const STATUS_COLORS: Record<string, string> = {
   available: "bg-green-100 text-green-800",
@@ -17,6 +19,7 @@ type VehicleListProps = {
   isError: boolean;
   userRole?: string;
   onDeleteRequest: (vehicle: VehicleListItem) => void;
+  getHeaderProps: (field: string) => SortableHeaderProps;
 };
 
 function SearchIcon({ className }: { className?: string }) {
@@ -46,6 +49,7 @@ export function VehicleList({
   isError,
   userRole,
   onDeleteRequest,
+  getHeaderProps,
 }: VehicleListProps) {
   const {
     searchQuery,
@@ -137,11 +141,11 @@ export function VehicleList({
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Vehicle</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">License plate</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Rent (daily / monthly)</th>
-                <th className="px-3 py-2 text-left font-medium text-slate-700">Current driver</th>
+                <SortableTableHeader label="Vehicle" {...getHeaderProps("model")} />
+                <SortableTableHeader label="License plate" {...getHeaderProps("plate_number")} />
+                <SortableTableHeader label="Status" {...getHeaderProps("status")} />
+                <SortableTableHeader label="Rent (daily / monthly)" {...getHeaderProps("weekly_rent")} />
+                <SortableTableHeader label="Current driver" {...getHeaderProps("current_driver_id")} />
                 <th className="px-3 py-2 text-left font-medium text-slate-700">Actions</th>
               </tr>
             </thead>

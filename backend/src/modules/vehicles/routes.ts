@@ -6,8 +6,26 @@ import {
   runAssignVehicleTransaction,
   runUnassignVehicleTransaction,
 } from "./vehicleAssignmentService";
+import { parseListSort, type ListSortQuery } from "../../lib/listSort";
 
 const router = Router();
+
+const VEHICLE_LIST_SORT_FIELDS: Record<string, string | readonly string[]> = {
+  plate_number: "v.license_plate",
+  model: ["v.model", "v.make"],
+  status: "v.status",
+  weekly_rent: "v.weekly_rent",
+  current_driver_id: [
+    "(v.current_driver_id IS NOT NULL)",
+    "d.last_name",
+    "d.first_name",
+  ],
+  created_at: "v.created_at",
+};
+
+function resolveVehicleListOrder(query: ListSortQuery) {
+  return parseListSort(query, VEHICLE_LIST_SORT_FIELDS, ["v.created_at"], "desc", "v.id ASC");
+}
 
 router.use(authenticateJWT);
 
@@ -51,12 +69,20 @@ router.get("/", async (req, res) => {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
 
-  const { search, status, limit, offset } = req.query as {
+  const { search, status, limit, offset, sort_by, sort_order } = req.query as {
     search?: string;
     status?: string;
     limit?: string;
     offset?: string;
+    sort_by?: string;
+    sort_order?: string;
   };
+
+  const sortResult = resolveVehicleListOrder({ sort_by, sort_order });
+  if (!sortResult.ok) {
+    return res.status(sortResult.status).json({ message: sortResult.message });
+  }
+
   const params: unknown[] = [orgId];
   const conditions = ["v.organization_id = $1"];
 
@@ -80,7 +106,7 @@ router.get("/", async (req, res) => {
       `
       ${VEHICLE_LIST_SELECT}
       ${where}
-      ORDER BY v.created_at DESC
+      ${sortResult.orderByClause}
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       params,
@@ -98,14 +124,21 @@ router.get("/search", async (req, res) => {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
 
-  const { q, status, limit, offset } = req.query as {
+  const { q, status, limit, offset, sort_by, sort_order } = req.query as {
     q?: string;
     status?: string;
     limit?: string;
     offset?: string;
+    sort_by?: string;
+    sort_order?: string;
   };
   if (!q || !String(q).trim()) {
     return res.status(400).json({ message: "q is required" });
+  }
+
+  const sortResult = resolveVehicleListOrder({ sort_by, sort_order });
+  if (!sortResult.ok) {
+    return res.status(sortResult.status).json({ message: sortResult.message });
   }
 
   const params: unknown[] = [orgId];
@@ -129,7 +162,7 @@ router.get("/search", async (req, res) => {
       `
       ${VEHICLE_LIST_SELECT}
       ${where}
-      ORDER BY v.created_at DESC
+      ${sortResult.orderByClause}
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       params,

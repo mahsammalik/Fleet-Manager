@@ -10,8 +10,23 @@ import {
   runAssignVehicleTransaction,
   runUnassignVehicleTransaction,
 } from "../vehicles/vehicleAssignmentService";
+import { parseListSort, type ListSortQuery } from "../../lib/listSort";
 
 const router = Router();
+
+const DRIVER_LIST_SORT_FIELDS: Record<string, string | readonly string[]> = {
+  first_name: "d.first_name",
+  last_name: ["d.last_name", "d.first_name"],
+  phone: "d.phone",
+  employment_status: "d.employment_status",
+  subcontractor_id: "s.legal_name",
+  created_at: "d.created_at",
+  current_vehicle_id: ["(d.current_vehicle_id IS NOT NULL)", "v.license_plate"],
+};
+
+function resolveDriverListOrder(query: ListSortQuery) {
+  return parseListSort(query, DRIVER_LIST_SORT_FIELDS, ["d.created_at"], "desc", "d.id ASC");
+}
 
 router.use(authenticateJWT);
 
@@ -45,7 +60,7 @@ const DRIVER_LIST_SELECT = `
       SELECT d.id, d.first_name, d.last_name, d.phone, d.email, d.address, d.license_number,
              d.employment_status, d.commission_rate, d.profile_photo_url,
              d.uber_driver_id, d.bolt_driver_id, d.glovo_courier_id, d.bolt_courier_id, d.wolt_courier_id,
-             d.current_vehicle_id, d.subcontractor_id,
+             d.current_vehicle_id, d.subcontractor_id, d.created_at,
              s.legal_name AS subcontractor_legal_name,
              v.license_plate AS current_vehicle_license_plate, v.make AS current_vehicle_make, v.model AS current_vehicle_model
       FROM drivers d
@@ -59,12 +74,19 @@ router.get("/", async (req, res) => {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
 
-  const { search, status, limit, offset } = req.query as {
+  const { search, status, limit, offset, sort_by, sort_order } = req.query as {
     search?: string;
     status?: string;
     limit?: string;
     offset?: string;
+    sort_by?: string;
+    sort_order?: string;
   };
+
+  const sortResult = resolveDriverListOrder({ sort_by, sort_order });
+  if (!sortResult.ok) {
+    return res.status(sortResult.status).json({ message: sortResult.message });
+  }
 
   const params: unknown[] = [orgId];
   const conditions = ["d.organization_id = $1", "(d.is_deleted = false OR d.is_deleted IS NULL)"];
@@ -90,7 +112,7 @@ router.get("/", async (req, res) => {
       `
       ${DRIVER_LIST_SELECT}
       ${where}
-      ORDER BY d.created_at DESC
+      ${sortResult.orderByClause}
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       params,
@@ -111,15 +133,22 @@ router.get("/search", async (req, res) => {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
 
-  const { q, status, limit, offset } = req.query as {
+  const { q, status, limit, offset, sort_by, sort_order } = req.query as {
     q?: string;
     status?: string;
     limit?: string;
     offset?: string;
+    sort_by?: string;
+    sort_order?: string;
   };
 
   if (!q || !String(q).trim()) {
     return res.status(400).json({ message: "q is required" });
+  }
+
+  const sortResult = resolveDriverListOrder({ sort_by, sort_order });
+  if (!sortResult.ok) {
+    return res.status(sortResult.status).json({ message: sortResult.message });
   }
 
   const params: unknown[] = [orgId];
@@ -144,7 +173,7 @@ router.get("/search", async (req, res) => {
       `
       ${DRIVER_LIST_SELECT}
       ${where}
-      ORDER BY d.created_at DESC
+      ${sortResult.orderByClause}
       LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       params,

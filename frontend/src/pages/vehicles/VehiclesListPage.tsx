@@ -4,16 +4,21 @@ import { Link } from "react-router-dom";
 import { getVehicles, deleteVehicle, type VehicleListItem } from "../../api/vehicles";
 import { useAuthStore } from "../../store/authStore";
 import { VehicleList } from "../../components/vehicles/VehicleList";
+import { useListSort } from "../../hooks/useListSort";
 
 export function VehiclesListPage() {
   const user = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<VehicleListItem | null>(null);
+  const { sortParams, getHeaderProps } = useListSort();
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["vehicles"],
+    queryKey: ["vehicles", sortParams],
     queryFn: async () => {
-      const { data: res } = await getVehicles({ limit: 10_000 });
+      const { data: res } = await getVehicles({
+        limit: 10_000,
+        ...(sortParams ?? {}),
+      });
       return res;
     },
   });
@@ -57,6 +62,7 @@ export function VehiclesListPage() {
             isError={isError}
             userRole={user?.role}
             onDeleteRequest={setDeleteTarget}
+            getHeaderProps={getHeaderProps}
           />
 
           {deleteTarget && (
