@@ -6,6 +6,7 @@ import {
   getDriverStatusDistribution,
   getDocumentStats,
   getRecentActivity,
+  getRecentAssignments,
 } from "../../api/dashboard";
 import type { DashboardActivityItem } from "../../api/dashboard";
 import { AnalyticsCard } from "../../components/dashboard/AnalyticsCard";
@@ -98,11 +99,16 @@ export function DashboardPage() {
   const statusQuery = useQuery({ queryKey: ["dashboard", "status"], queryFn: () => getDriverStatusDistribution() });
   const docsQuery = useQuery({ queryKey: ["dashboard", "documents"], queryFn: () => getDocumentStats() });
   const activityQuery = useQuery({ queryKey: ["dashboard", "activity"], queryFn: () => getRecentActivity() });
+  const assignmentsQuery = useQuery({
+    queryKey: ["dashboard", "recent-assignments"],
+    queryFn: () => getRecentAssignments(5).then((r) => r.data.items),
+  });
 
   const stats = statsQuery.data?.data;
   const statusData = statusQuery.data?.data ?? [];
   const docsData = docsQuery.data?.data ?? [];
   const activities = activityQuery.data?.data ?? [];
+  const recentAssignments = assignmentsQuery.data ?? [];
 
   const isLoading = statsQuery.isLoading || statusQuery.isLoading;
   const isError = statsQuery.isError || statusQuery.isError;
@@ -173,15 +179,7 @@ export function DashboardPage() {
               <AnalyticsCard title="Total vehicles" value={stats.totalVehicles ?? 0} icon={<VehicleIcon />} />
             </Link>
             <Link to="/vehicles" className="block rounded-xl hover:shadow-lg transition-shadow">
-              <AnalyticsCard title="Active rentals" value={stats.activeRentals ?? 0} icon={<VehicleIcon />} />
-            </Link>
-            <Link to="/rentals/overdue" className="block rounded-xl hover:shadow-lg transition-shadow">
-              <AnalyticsCard
-                title="Overdue rentals"
-                value={stats.overdueRentals ?? 0}
-                trend={{ value: "needs attention", positive: false }}
-                icon={<VehicleIcon />}
-              />
+              <AnalyticsCard title="Assigned vehicles" value={stats.assignedVehicles ?? 0} icon={<VehicleIcon />} />
             </Link>
             <AnalyticsCard
               title="Commission earned"
@@ -238,7 +236,53 @@ export function DashboardPage() {
               rows={activityToRows(activities)}
               emptyMessage="No recent activity."
             />
-            <ChartPlaceholder title="Trips this week" height={320} />
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3">Recent assignments</h3>
+              {assignmentsQuery.isLoading && (
+                <p className="text-sm text-slate-500">Loading…</p>
+              )}
+              {!assignmentsQuery.isLoading && recentAssignments.length === 0 && (
+                <p className="text-sm text-slate-500">No assignment history yet.</p>
+              )}
+              {recentAssignments.length > 0 && (
+                <ul className="divide-y divide-slate-100 text-sm">
+                  {recentAssignments.map((a) => (
+                    <li key={a.id} className="py-2.5 flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <Link
+                          to={`/drivers/${a.driver_id}`}
+                          className="font-medium text-sky-600 hover:underline"
+                        >
+                          {a.driver_name || "Driver"}
+                        </Link>
+                        <span className="text-slate-400 mx-1">→</span>
+                        <Link
+                          to={`/vehicles/${a.vehicle_id}`}
+                          className="text-sky-600 hover:underline"
+                        >
+                          {a.vehicle_name?.trim() || a.license_plate || "Vehicle"}
+                        </Link>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Assigned {a.assigned_at.split("T")[0]}
+                          {a.is_active ? (
+                            <span className="ml-2 inline-flex rounded-full bg-emerald-100 px-1.5 py-0.5 text-emerald-800 font-medium">
+                              Active
+                            </span>
+                          ) : a.unassigned_at ? (
+                            <span className="ml-1">· Returned {a.unassigned_at.split("T")[0]}</span>
+                          ) : null}
+                        </p>
+                      </div>
+                      {a.weekly_rent_at_time != null && (
+                        <span className="text-xs text-slate-600 tabular-nums shrink-0">
+                          {formatCurrency(Number(a.weekly_rent_at_time))}/wk
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         </section>
       </div>

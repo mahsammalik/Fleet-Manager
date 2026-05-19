@@ -6,7 +6,6 @@ import {
   updateDriverNotes,
   deleteDriver,
   getDriverActivity,
-  getDriverActiveRental,
   uploadDriverPhoto,
   type Driver,
   type DriverActivity,
@@ -16,14 +15,12 @@ import {
   PLATFORM_ID_LABELS,
 } from "../../constants/platformIds";
 import { DriverAvatar } from "../../components/drivers/DriverAvatar";
-import {
-  RentalCompletionModal,
-  toDateInputValue,
-} from "../../components/rentals/RentalCompletionModal";
-import { updateVehicleRental } from "../../api/vehicles";
 import { useAuthStore } from "../../store/authStore";
+import { getVehicles, type VehicleListItem } from "../../api/vehicles";
+import { assignVehicleToDriver, unassignDriverVehicle } from "../../api/vehicleAssignments";
 import { DocumentUpload } from "../../components/documents/DocumentUpload";
 import { DocumentList } from "../../components/documents/DocumentList";
+import { VehicleAssignmentHistoryPanel } from "../../components/vehicles/VehicleAssignmentHistoryPanel";
 
 type TabId = "profile" | "documents" | "activity";
 
@@ -64,7 +61,8 @@ export function DriverDetailPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [notesEdit, setNotesEdit] = useState(false);
   const [notesValue, setNotesValue] = useState("");
-  const [endRentalConfirm, setEndRentalConfirm] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [selectedVehicleId, setSelectedVehicleId] = useState("");
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const { data: driverRes, isLoading: loadingDriver, isError: driverError } = useQuery({
@@ -79,15 +77,17 @@ export function DriverDetailPage() {
     enabled: !!id && tab === "activity",
   });
 
-  const { data: activeRentalRes } = useQuery({
-    queryKey: ["driverActiveRental", id],
-    queryFn: () => getDriverActiveRental(id!),
-    enabled: !!id && tab === "profile",
+  const { data: vehiclesRes } = useQuery({
+    queryKey: ["vehicles", "for-assign"],
+    queryFn: () => getVehicles({ limit: 500 }),
+    enabled: assignOpen && !!id,
   });
 
   const driver = driverRes?.data;
   const activities = activityRes?.data ?? [];
-  const activeRental = activeRentalRes?.data ?? null;
+  const vehiclesForAssign = (vehiclesRes?.data ?? []).filter(
+    (v: VehicleListItem) => v.status !== "sold" && v.status !== "scrapped",
+  );
 
   const notesMutation = useMutation({
     mutationFn: (notes: string | null) => updateDriverNotes(id!, notes),
@@ -107,20 +107,23 @@ export function DriverDetailPage() {
     },
   });
 
-  const endRentalMutation = useMutation({
-    mutationFn: async ({ completionDate }: { completionDate: string }) => {
-      const rental = activeRental;
-      if (!rental) throw new Error("No active rental");
-      return updateVehicleRental(rental.vehicle_id, rental.rental_id, {
-        status: "completed",
-        completionDate,
-      });
-    },
+  const assignMutation = useMutation({
+    mutationFn: (vehicleId: string) => assignVehicleToDriver(id!, vehicleId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["driver", id] });
-      queryClient.invalidateQueries({ queryKey: ["driverActiveRental", id] });
-      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
-      setEndRentalConfirm(false);
+      void queryClient.invalidateQueries({ queryKey: ["driver", id] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicle-assignment-history"] });
+      setAssignOpen(false);
+      setSelectedVehicleId("");
+    },
+  });
+
+  const unassignMutation = useMutation({
+    mutationFn: () => unassignDriverVehicle(id!),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["driver", id] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicle-assignment-history"] });
     },
   });
 
@@ -360,28 +363,36 @@ export function DriverDetailPage() {
                     {d.current_vehicle_make ?? ""} {d.current_vehicle_model ?? ""}
                     {d.current_vehicle_license_plate ? ` (${d.current_vehicle_license_plate})` : ""}
                   </Link>
-                  {activeRental && activeRental.deposit_amount && Number(activeRental.deposit_amount) > 0 && (
-                    <span className="text-xs text-slate-500">
-                      · Deposit {activeRental.deposit_status ?? "pending"}
-                    </span>
-                  )}
-                  {canEdit && activeRental && (
+                  {canEdit && (
                     <button
                       type="button"
-                      onClick={() => setEndRentalConfirm(true)}
-                      className="rounded-md border border-amber-300 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
+                      onClick={() => unassignMutation.mutate()}
+                      disabled={unassignMutation.isPending}
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                      End rental
+                      Unassign vehicle
                     </button>
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-slate-500">
-                  No vehicle assigned. Assign a vehicle from the{" "}
-                  <Link to="/vehicles" className="text-sky-600 hover:underline">vehicle detail page</Link>.
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-slate-500">No vehicle assigned.</p>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => setAssignOpen(true)}
+                      className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700"
+                    >
+                      Assign vehicle
+                    </button>
+                  )}
+                </div>
               )}
             </section>
+
+            {(user?.role === "admin" || user?.role === "accountant") && id && (
+              <VehicleAssignmentHistoryPanel mode="driver" entityId={id} title="Vehicle history" />
+            )}
 
             <section className="bg-white rounded-xl shadow-sm p-6">
               <h2 className="text-sm font-semibold text-slate-800 mb-3">Notes</h2>
@@ -510,18 +521,46 @@ export function DriverDetailPage() {
         </div>
       )}
 
-      {endRentalConfirm && (
-        <RentalCompletionModal
-          open
-          onClose={() => setEndRentalConfirm(false)}
-          title="End rental?"
-          description="This will mark the current rental as completed and unassign the vehicle from this driver."
-          minDate={activeRental ? toDateInputValue(activeRental.rental_start_date) : undefined}
-          defaultDate={activeRental ? toDateInputValue(activeRental.rental_end_date) : undefined}
-          confirmLabel="End rental"
-          isSubmitting={endRentalMutation.isPending}
-          onConfirm={(completionDate) => endRentalMutation.mutate({ completionDate })}
-        />
+      {assignOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-slate-900">Assign vehicle</h3>
+            <p className="text-sm text-slate-600 mt-1">Select a vehicle for this driver.</p>
+            <select
+              className="mt-4 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={selectedVehicleId}
+              onChange={(e) => setSelectedVehicleId(e.target.value)}
+            >
+              <option value="">Choose vehicle…</option>
+              {vehiclesForAssign.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.license_plate} — {v.make} {v.model}
+                  {v.current_driver_id && v.current_driver_id !== id ? " (reassign)" : ""}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                disabled={!selectedVehicleId || assignMutation.isPending}
+                onClick={() => assignMutation.mutate(selectedVehicleId)}
+                className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {assignMutation.isPending ? "Assigning…" : "Assign"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAssignOpen(false);
+                  setSelectedVehicleId("");
+                }}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

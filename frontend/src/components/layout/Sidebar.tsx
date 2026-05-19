@@ -3,11 +3,6 @@ import { Link, useLocation } from "react-router-dom";
 import { useAuthStore } from "../../store/authStore";
 import { LogoutButton } from "../UI/LogoutButton";
 
-const rentalsNavItemsForStaff = [
-  { to: "/rentals/active", label: "Vehicle rentals", icon: VehiclesIcon },
-  { to: "/rentals/overdue", label: "Overdue rentals", icon: VehiclesIcon },
-] as const;
-
 const earningsSubItems = [
   { to: "/earnings", label: "Overview" },
   { to: "/earnings/import", label: "Import" },
@@ -85,14 +80,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
   const role = useAuthStore((s) => s.user?.role);
   const showEarnings = role === "admin" || role === "accountant";
-  const showRentalsStaffNav = role === "admin" || role === "accountant";
-
   const navItems = [
     { to: "/dashboard", label: "Dashboard", icon: DashboardIcon },
     { to: "/drivers", label: "Drivers", icon: DriversIcon },
     { to: "/vehicles", label: "Vehicles", icon: VehiclesIcon },
     ...(showEarnings ? [{ to: "/subcontractors", label: "Subcontractors", icon: DriversIcon }] : []),
-    ...(showRentalsStaffNav ? rentalsNavItemsForStaff.map((x) => ({ ...x })) : []),
   ];
   const [earningsOpen, setEarningsOpen] = useState(() => location.pathname.startsWith("/earnings"));
 

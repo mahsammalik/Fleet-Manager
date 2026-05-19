@@ -5,6 +5,11 @@ import { authenticateJWT, requireRole } from "../../middleware/auth";
 import { query } from "../../db/pool";
 import { logDriverActivity } from "./activity";
 import { driverProfilePhotoUpload } from "../../config/multer";
+import { handleDriverVehicleHistory } from "../vehicles/vehicleAssignmentHistoryHandlers";
+import {
+  runAssignVehicleTransaction,
+  runUnassignVehicleTransaction,
+} from "../vehicles/vehicleAssignmentService";
 
 const router = Router();
 
@@ -153,40 +158,68 @@ router.get("/search", async (req, res) => {
   }
 });
 
-router.get("/:id/active-rental", async (req, res) => {
+router.post("/:id/assign-vehicle", requireRole("admin", "accountant"), async (req, res) => {
   const orgId = req.user?.orgId;
-  const { id } = req.params;
+  const driverId = String(req.params.id);
+  const body = req.body as { vehicleId?: string };
+  const vehicleId = typeof body.vehicleId === "string" ? body.vehicleId.trim() : "";
 
   if (!orgId) {
     return res.status(400).json({ message: "User is not associated with an organization" });
   }
+  if (!UUID_RE.test(driverId) || !UUID_RE.test(vehicleId)) {
+    return res.status(400).json({ message: "Invalid driver or vehicle id" });
+  }
 
   try {
+    await runAssignVehicleTransaction({
+      orgId,
+      driverId,
+      vehicleId,
+      assignedBy: req.user?.sub ?? null,
+      notes: "Assigned via driver profile",
+    });
     const { rows } = await query(
-      `
-      SELECT
-        r.id AS rental_id,
-        r.vehicle_id,
-        r.rental_start_date,
-        r.rental_end_date,
-        r.status,
-        r.deposit_amount,
-        r.deposit_status
-      FROM vehicle_rentals r
-      WHERE r.driver_id = $1 AND r.organization_id = $2 AND r.status = 'active'
-      ORDER BY r.rental_start_date DESC
-      LIMIT 1
-      `,
-      [id, orgId],
+      `SELECT id::text FROM drivers WHERE id = $1::uuid AND organization_id = $2::uuid`,
+      [driverId, orgId],
     );
-
-    const rental = rows[0];
-    if (!rental) {
-      return res.json(null);
-    }
-    return res.json(rental);
+    if (!rows[0]) return res.status(404).json({ message: "Driver not found" });
+    return res.json({ driverId, vehicleId });
   } catch (err) {
-    console.error("Get driver active rental error", err);
+    const msg = err instanceof Error ? err.message : "Assign failed";
+    if (msg === "Driver not found" || msg === "Vehicle not found") {
+      return res.status(404).json({ message: msg });
+    }
+    console.error("Assign vehicle to driver error", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+router.post("/:id/unassign-vehicle", requireRole("admin", "accountant"), async (req, res) => {
+  const orgId = req.user?.orgId;
+  const driverId = String(req.params.id);
+
+  if (!orgId) {
+    return res.status(400).json({ message: "User is not associated with an organization" });
+  }
+  if (!UUID_RE.test(driverId)) {
+    return res.status(400).json({ message: "Invalid driver id" });
+  }
+
+  try {
+    await runUnassignVehicleTransaction({
+      orgId,
+      driverId,
+      unassignedBy: req.user?.sub ?? null,
+      notes: "Unassigned via driver profile",
+    });
+    return res.json({ driverId, vehicleId: null });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unassign failed";
+    if (msg === "Driver not found") {
+      return res.status(404).json({ message: msg });
+    }
+    console.error("Unassign vehicle from driver error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });
@@ -309,6 +342,10 @@ router.get("/:id", async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 });
+
+const driverVehicleHistory = [requireRole("admin", "accountant"), handleDriverVehicleHistory];
+router.get("/:id/vehicle-assignment-history", ...driverVehicleHistory);
+router.get("/:id/vehicle-history", ...driverVehicleHistory);
 
 router.get("/:id/activity", async (req, res) => {
   const orgId = req.user?.orgId;

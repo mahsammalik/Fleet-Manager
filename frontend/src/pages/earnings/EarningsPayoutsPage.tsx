@@ -7,7 +7,7 @@ import {
   bulkUpdatePayouts,
   getDebtsSummary,
   getEarningsPayouts,
-  getPayoutsWithProrationDetails,
+  getPayoutsAssignmentDetails,
   postDebtsBulkCarryForward,
 } from "../../api/earnings";
 import type { PayoutListItem } from "../../api/earnings";
@@ -50,6 +50,13 @@ export function EarningsPayoutsPage() {
   }, [q]);
 
   useEffect(() => {
+    const urlFrom = searchParams.get("from")?.trim();
+    const urlTo = searchParams.get("to")?.trim();
+    if (urlFrom && /^\d{4}-\d{2}-\d{2}$/.test(urlFrom)) setFrom(urlFrom);
+    if (urlTo && /^\d{4}-\d{2}-\d{2}$/.test(urlTo)) setTo(urlTo);
+  }, [searchParams]);
+
+  useEffect(() => {
     setPage(1);
   }, [debouncedQ]);
 
@@ -73,9 +80,9 @@ export function EarningsPayoutsPage() {
   const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / (query.data?.pageSize ?? 25)));
 
   const detailsQuery = useQuery({
-    queryKey: ["earnings", "payout-proration-details", page, status, from, to, debouncedQ, driverIdFromUrl, showSubManaged],
+    queryKey: ["earnings", "payout-assignment-details", page, status, from, to, debouncedQ, driverIdFromUrl, showSubManaged],
     queryFn: () =>
-      getPayoutsWithProrationDetails({
+      getPayoutsAssignmentDetails({
         page,
         pageSize: 25,
         status: status || undefined,

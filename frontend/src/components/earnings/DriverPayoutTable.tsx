@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import type { PayoutListItem, PayoutProrationDetail, PayoutRentEntry } from "../../api/earnings";
+import type { PayoutListItem, PayoutAssignmentDetail, PayoutRentEntry } from "../../api/earnings";
 import { usePayoutSearch } from "../../hooks/usePayoutSearch";
 import { ConfirmDialog } from "../UI/ConfirmDialog";
 import { formatCurrency } from "../../utils/currency";
@@ -9,7 +9,7 @@ import { earningsPlatformLabel } from "../../utils/earningsPlatformLabel";
 
 type DriverPayoutTableProps = {
   rows: PayoutListItem[];
-  detailsByPayoutId: Map<string, PayoutProrationDetail>;
+  detailsByPayoutId: Map<string, PayoutAssignmentDetail>;
   selectedIds: Set<string>;
   isLoading: boolean;
   isPaying: boolean;
@@ -466,13 +466,8 @@ export function DriverPayoutTable({
                                 query={debouncedQuery}
                               />
                             </span>
-                            {detail?.has_unreturned_active_rental && (
-                              <span
-                                className="inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-400"
-                                title={`Active rental extends past ${row.payment_period_end?.slice(0, 10) ?? "week_end"} (status: ${detail.rental_status ?? "active"}). Confirm vehicle return.`}
-                              >
-                                Vehicle not returned?
-                              </span>
+                            {detail?.license_plate && (
+                              <span className="text-[11px] text-slate-500">{detail.license_plate}</span>
                             )}
                           </div>
                         </td>
@@ -612,18 +607,13 @@ export function DriverPayoutTable({
                                 </p>
                               </div>
                               <div>
-                                <p className="font-semibold text-slate-800">Rental match</p>
+                                <p className="font-semibold text-slate-800">Vehicle assignment</p>
+                                <p>Assigned: {detail?.has_vehicle_assigned ? "Yes" : "No"}</p>
+                                <p>Plate: {detail?.license_plate ?? "—"}</p>
                                 <p>
-                                  Rental amount:{" "}
-                                  {detail?.rental_amount ? formatCurrency(toNum(detail.rental_amount)) : "—"}
+                                  Weekly rent:{" "}
+                                  {detail?.weekly_rent ? formatCurrency(toNum(detail.weekly_rent)) : "—"}
                                 </p>
-                                <p>
-                                  Rental period:{" "}
-                                  {detail?.rental_start_date
-                                    ? `${detail.rental_start_date.slice(0, 10)} – ${detail.rental_end_date?.slice(0, 10) ?? "—"}`
-                                    : "—"}
-                                </p>
-                                <p>Rental type: {detail?.rental_type ?? "—"}</p>
                               </div>
                               <div>
                                 <p className="font-semibold text-slate-800">Payment status</p>
@@ -743,15 +733,8 @@ export function DriverPayoutTable({
                       />
                     </span>
                   </p>
-                  {detail?.has_unreturned_active_rental && (
-                    <p className="mt-1">
-                      <span
-                        className="inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-400"
-                        title={`Active rental extends past ${row.payment_period_end?.slice(0, 10) ?? "week_end"} (status: ${detail.rental_status ?? "active"}). Confirm vehicle return.`}
-                      >
-                        Vehicle not returned?
-                      </span>
-                    </p>
+                  {detail?.license_plate && (
+                    <p className="mt-1 text-[11px] text-slate-500">Assigned: {detail.license_plate}</p>
                   )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {isPending && (
@@ -858,9 +841,9 @@ export function DriverPayoutTable({
                       <p className="mt-1 font-semibold text-slate-900">
                         Net payout: {formatCurrency(toNum(row.net_driver_payout))}
                       </p>
-                      {detail?.rental_amount && (
+                      {detail?.weekly_rent && (
                         <p className="mt-1 text-slate-600">
-                          Rental contract: {formatCurrency(toNum(detail.rental_amount))}
+                          Weekly rent: {formatCurrency(toNum(detail.weekly_rent))}
                         </p>
                       )}
                     </div>

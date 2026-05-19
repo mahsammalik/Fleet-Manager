@@ -23,7 +23,6 @@ export type EarningsCommitResult = {
   skippedNoDate: number;
   skippedNoMoney: number;
   totals: EarningsCommitTotals;
-  autoMatchedVehicleRentals: number;
   warnings: string[];
 };
 
@@ -317,10 +316,10 @@ export async function runEarningsCommitFromStaging(
         ) VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, $8, $9, $10, $11, $12,
           ROUND((
             $9::numeric - ABS($11::numeric)
-            - calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date, false)
+            - calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date)
           )::numeric, 2),
           0, 0, 0, 0,
-          calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date, false),
+          calculate_rental_fee($1::uuid, $2::uuid, $4::date, $5::date),
           'pending',
           $13, $14, $15, $16, $17)
         ON CONFLICT (organization_id, driver_id, payment_period_start, payment_period_end)
@@ -338,9 +337,9 @@ export async function runEarningsCommitFromStaging(
             - ABS(
               COALESCE(driver_payouts.account_opening_fee, 0) + COALESCE(EXCLUDED.account_opening_fee, 0)
             )
-            - calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date, false)
+            - calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date)
           )::numeric, 2),
-          vehicle_rental_fee = calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date, false),
+          vehicle_rental_fee = calculate_rental_fee($1::uuid, EXCLUDED.driver_id, EXCLUDED.payment_period_start::date, EXCLUDED.payment_period_end::date),
           gross_income = COALESCE(driver_payouts.gross_income, 0) + EXCLUDED.gross_income,
           net_income = COALESCE(driver_payouts.net_income, 0) + EXCLUDED.net_income,
           commission_base = COALESCE(driver_payouts.commission_base, 0) + EXCLUDED.commission_base,
@@ -374,45 +373,28 @@ export async function runEarningsCommitFromStaging(
     }
   }
 
-  const matchRes = await client.query<{ c: string }>(
-    `SELECT COUNT(*)::text AS c FROM earnings_records WHERE import_id = $1::uuid AND vehicle_rental_id IS NOT NULL`,
-    [importId],
-  );
-  const autoMatchedVehicleRentals = parseInt(matchRes.rows[0]?.c ?? "0", 10);
-
   const driverIds = [...byDriver.keys()];
   const warnings: string[] = [];
   if (driverIds.length > 0) {
-    const unreturned = await client.query<{
-      first_name: string;
-      last_name: string;
-      rental_end_date: string;
-    }>(
-      `SELECT d.first_name, d.last_name, vr.rental_end_date::text
-       FROM vehicle_rentals vr
-       JOIN drivers d ON d.id = vr.driver_id
-       WHERE vr.organization_id = $1::uuid
-         AND vr.driver_id = ANY($2::uuid[])
-         AND vr.status = 'active'
-         AND vr.rental_end_date > $3::date
-         AND vr.rental_start_date <= $3::date
-       ORDER BY d.last_name, d.first_name, vr.rental_end_date`,
-      [orgId, driverIds, weekEndEff],
+    const zeroWeeklyRent = await client.query<{ first_name: string; last_name: string; license_plate: string }>(
+      `SELECT DISTINCT d.first_name, d.last_name, v.license_plate
+       FROM drivers d
+       INNER JOIN vehicles v ON v.id = d.current_vehicle_id AND v.organization_id = d.organization_id
+       WHERE d.organization_id = $1::uuid
+         AND d.id = ANY($2::uuid[])
+         AND d.current_vehicle_id IS NOT NULL
+         AND COALESCE(v.weekly_rent, 0) = 0
+       ORDER BY d.last_name, d.first_name, v.license_plate`,
+      [orgId, driverIds],
     );
-    for (const r of unreturned.rows) {
+    for (const r of zeroWeeklyRent.rows) {
       warnings.push(
-        `${r.first_name} ${r.last_name}: active rental ends ${r.rental_end_date} (after week_end ${weekEndEff}) — vehicle not returned?`,
+        `${r.first_name} ${r.last_name}: assigned vehicle (${r.license_plate}) has no weekly rent — fee not deducted; set Weekly rent on the vehicle.`,
       );
     }
   }
 
   await client.query(`DELETE FROM earnings_import_staging WHERE import_id = $1`, [importId]);
-
-  await client.query(`SELECT refresh_subcontractor_rent_charges($1::uuid, $2::date, $3::date)`, [
-    orgId,
-    weekStartEff,
-    weekEndEff,
-  ]);
 
   await client.query(`SELECT refresh_subcontractor_payouts($1::uuid, $2::date, $3::date)`, [
     orgId,
@@ -426,7 +408,6 @@ export async function runEarningsCommitFromStaging(
     skippedNoDate,
     skippedNoMoney,
     totals,
-    autoMatchedVehicleRentals,
     warnings,
   };
 }

@@ -8,6 +8,7 @@ import {
   SETTLEMENT_TOTALS_SELECT,
 } from "./settlementTotalsSql";
 import { validateSettlementDetail } from "./settlementDetailValidation";
+import { refreshVehicleRentForPeriod } from "../earnings/refreshVehicleRentForPeriod";
 
 const router = Router();
 
@@ -88,10 +89,7 @@ router.post("/refresh", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const rentRes = await client.query<{ n: string }>(
-      `SELECT refresh_subcontractor_rent_charges($1::uuid, $2::date, $3::date)::text AS n`,
-      [orgId, period.start, period.end],
-    );
+    const rentRefresh = await refreshVehicleRentForPeriod(client, orgId, period.start, period.end);
     const payoutRes = await client.query<{ n: string }>(
       `SELECT refresh_subcontractor_payouts($1::uuid, $2::date, $3::date)::text AS n`,
       [orgId, period.start, period.end],
@@ -100,7 +98,8 @@ router.post("/refresh", async (req, res) => {
     return res.json({
       periodStart: period.start,
       periodEnd: period.end,
-      updatedRentSubcontractors: parseInt(rentRes.rows[0]?.n ?? "0", 10),
+      driverPayoutsFeesUpdated: rentRefresh.feesUpdated,
+      driverPayoutsSynced: rentRefresh.payoutsSynced,
       updatedPayoutSettlements: parseInt(payoutRes.rows[0]?.n ?? "0", 10),
     });
   } catch (err) {

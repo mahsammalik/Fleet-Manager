@@ -3,29 +3,24 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import {
   getVehicleById,
-  getVehicleRentals,
   getVehicleMaintenance,
-  createVehicleRental,
   createVehicleMaintenance,
-  updateVehicleRental,
   type Vehicle,
-  type VehicleRental,
   type VehicleMaintenance,
-  type CreateRentalPayload,
   type CreateMaintenancePayload,
 } from "../../api/vehicles";
+import {
+  assignDriverToVehicle,
+  unassignDriverFromVehicle,
+} from "../../api/vehicleAssignments";
+import { getDrivers, type DriverListItem } from "../../api/drivers";
 import { VehicleDocumentUpload } from "../../components/vehicles/VehicleDocumentUpload";
 import { VehicleDocumentList } from "../../components/vehicles/VehicleDocumentList";
-import {
-  RentalCompletionModal,
-  toDateInputValue,
-} from "../../components/rentals/RentalCompletionModal";
-import { VehicleRentalDialog } from "../../components/rentals/VehicleRentalDialog";
+import { VehicleAssignmentHistoryPanel } from "../../components/vehicles/VehicleAssignmentHistoryPanel";
 import { useAuthStore } from "../../store/authStore";
 import { formatCurrency } from "../../utils/currency";
-import { Tooltip } from "../../components/UI/Tooltip";
 
-type TabId = "profile" | "rentals" | "maintenance" | "documents";
+type TabId = "profile" | "maintenance" | "documents";
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -38,33 +33,20 @@ function formatDate(value: string | null | undefined): string {
   }
 }
 
+function driverDisplayName(
+  firstName?: string | null,
+  lastName?: string | null,
+): string {
+  const name = `${firstName ?? ""} ${lastName ?? ""}`.trim();
+  return name || "View driver";
+}
+
 const STATUS_COLORS: Record<string, string> = {
   available: "bg-green-100 text-green-800",
   rented: "bg-blue-100 text-blue-800",
   maintenance: "bg-amber-100 text-amber-800",
   sold: "bg-slate-100 text-slate-800",
   scrapped: "bg-red-100 text-red-800",
-};
-
-const RENTAL_STATUS_COLORS: Record<string, string> = {
-  active: "bg-green-100 text-green-800",
-  completed: "bg-slate-100 text-slate-800",
-  cancelled: "bg-red-100 text-red-800",
-  overdue: "bg-amber-100 text-amber-800",
-};
-
-const PAYMENT_STATUS_COLORS: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-800",
-  paid: "bg-green-100 text-green-800",
-  partial: "bg-blue-100 text-blue-800",
-  overdue: "bg-red-100 text-red-800",
-};
-
-const DEPOSIT_STATUS_COLORS: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-800",
-  paid: "bg-green-100 text-green-800",
-  refunded: "bg-slate-100 text-slate-800",
-  partial: "bg-blue-100 text-blue-800",
 };
 
 const MAINTENANCE_STATUS_COLORS: Record<string, string> = {
@@ -79,24 +61,14 @@ export function VehicleDetailPage() {
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const [tab, setTab] = useState<TabId>("profile");
-  const [addRentalOpen, setAddRentalOpen] = useState(false);
   const [addMaintenanceOpen, setAddMaintenanceOpen] = useState(false);
-  const [completeRentalId, setCompleteRentalId] = useState<string | null>(null);
-  const [depositAction, setDepositAction] = useState<{
-    type: "pay" | "refund" | "deduct";
-    rental: VehicleRental;
-  } | null>(null);
+  const [assignDriverOpen, setAssignDriverOpen] = useState(false);
+  const [selectedDriverId, setSelectedDriverId] = useState("");
 
   const { data: vehicleRes, isLoading: loadingVehicle, isError: vehicleError } = useQuery({
     queryKey: ["vehicle", id],
     queryFn: () => getVehicleById(id!),
     enabled: !!id,
-  });
-
-  const { data: rentalsRes } = useQuery({
-    queryKey: ["vehicleRentals", id],
-    queryFn: () => getVehicleRentals(id!),
-    enabled: !!id && tab === "rentals",
   });
 
   const { data: maintenanceRes } = useQuery({
@@ -105,39 +77,36 @@ export function VehicleDetailPage() {
     enabled: !!id && tab === "maintenance",
   });
 
+  const { data: driversRes } = useQuery({
+    queryKey: ["drivers", "for-assign"],
+    queryFn: () => getDrivers({ limit: 500, status: "active" }),
+    enabled: assignDriverOpen && !!id,
+  });
+
   const vehicle = vehicleRes?.data;
-  const rentals = rentalsRes?.data ?? [];
   const maintenanceList = maintenanceRes?.data ?? [];
+  const driversForAssign = driversRes?.data ?? [];
   const canEdit = user?.role === "admin" || user?.role === "accountant";
 
-  const createRentalMutation = useMutation({
-    mutationFn: (payload: CreateRentalPayload) => createVehicleRental(id!, payload),
-    onSuccess: (response) => {
-      const rental = response.data;
-      queryClient.invalidateQueries({ queryKey: ["vehicleRentals", id] });
-      queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
-      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
-      if (rental?.driver_id) {
-        queryClient.invalidateQueries({ queryKey: ["driver", rental.driver_id] });
-        queryClient.invalidateQueries({ queryKey: ["driverActiveRental", rental.driver_id] });
-      }
-      setAddRentalOpen(false);
+  const assignDriverMutation = useMutation({
+    mutationFn: (driverId: string) => assignDriverToVehicle(id!, driverId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicle-assignment-history"] });
+      void queryClient.invalidateQueries({ queryKey: ["drivers"] });
+      setAssignDriverOpen(false);
+      setSelectedDriverId("");
     },
   });
 
-  const completeRentalMutation = useMutation({
-    mutationFn: ({ rentalId, completionDate }: { rentalId: string; completionDate: string }) =>
-      updateVehicleRental(id!, rentalId, { status: "completed", completionDate }),
-    onSuccess: (response) => {
-      const rental = response.data;
-      queryClient.invalidateQueries({ queryKey: ["vehicleRentals", id] });
-      queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
-      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
-      if (rental?.driver_id) {
-        queryClient.invalidateQueries({ queryKey: ["driver", rental.driver_id] });
-        queryClient.invalidateQueries({ queryKey: ["driverActiveRental", rental.driver_id] });
-      }
-      setCompleteRentalId(null);
+  const unassignDriverMutation = useMutation({
+    mutationFn: () => unassignDriverFromVehicle(id!),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["vehicle", id] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+      void queryClient.invalidateQueries({ queryKey: ["vehicle-assignment-history"] });
+      void queryClient.invalidateQueries({ queryKey: ["drivers"] });
     },
   });
 
@@ -225,7 +194,7 @@ export function VehicleDetailPage() {
         </div>
 
         <nav className="flex gap-1 mt-4 border-b border-slate-200">
-          {(["profile", "rentals", "maintenance", "documents"] as TabId[]).map((t) => (
+          {(["profile", "maintenance", "documents"] as TabId[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -255,22 +224,73 @@ export function VehicleDetailPage() {
                 <div><dt className="text-slate-500">VIN</dt><dd>{v.vin ?? "—"}</dd></div>
                 <div><dt className="text-slate-500">Fuel / Transmission</dt><dd>{[v.fuel_type, v.transmission].filter(Boolean).join(" · ") || "—"}</dd></div>
                 <div><dt className="text-slate-500">Seating capacity</dt><dd>{v.seating_capacity ?? "—"}</dd></div>
-                <div><dt className="text-slate-500">Current driver</dt><dd>{v.current_driver_id ? (
-                  <Link to={`/drivers/${v.current_driver_id}`} className="text-sky-600 hover:underline">
-                    {v.driver_first_name || v.driver_last_name ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim() : "View driver"}
-                  </Link>
-                ) : (v.driver_first_name || v.driver_last_name ? `${v.driver_first_name ?? ""} ${v.driver_last_name ?? ""}`.trim() : "—")}</dd></div>
+                <div>
+                  <dt className="text-slate-500">Current driver</dt>
+                  <dd>
+                    {v.current_driver_id ? (
+                      <Link
+                        to={`/drivers/${v.current_driver_id}`}
+                        className="text-sky-600 hover:underline"
+                      >
+                        {driverDisplayName(v.driver_first_name, v.driver_last_name)}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </dd>
+                </div>
               </dl>
             </section>
+
+            {canEdit && (
+              <section className="bg-white rounded-xl shadow-sm p-6">
+                <h2 className="text-sm font-semibold text-slate-800 mb-3">Driver assignment</h2>
+                {v.current_driver_id ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link
+                      to={`/drivers/${v.current_driver_id}`}
+                      className="text-sm text-sky-600 hover:underline font-medium"
+                    >
+                      {driverDisplayName(v.driver_first_name, v.driver_last_name)}
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => unassignDriverMutation.mutate()}
+                      disabled={unassignDriverMutation.isPending}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {unassignDriverMutation.isPending ? "Unassigning…" : "Unassign driver"}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setAssignDriverOpen(true)}
+                    className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700"
+                  >
+                    Assign driver
+                  </button>
+                )}
+              </section>
+            )}
 
             <section className="bg-white rounded-xl shadow-sm p-6">
               <h2 className="text-sm font-semibold text-slate-800 mb-3">Rental rates (RON)</h2>
               <dl className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                 <div><dt className="text-slate-500">Daily</dt><dd className="font-medium">{formatCurrency(Number(v.daily_rent))}</dd></div>
-                <div><dt className="text-slate-500">Weekly</dt><dd className="font-medium">{formatCurrency(Number(v.weekly_rent))}</dd></div>
+                <div>
+                  <dt className="text-slate-500" title="Deducted each payout week while assigned to a driver.">
+                    Weekly (payroll)
+                  </dt>
+                  <dd className="font-medium">{formatCurrency(Number(v.weekly_rent))}</dd>
+                </div>
                 <div><dt className="text-slate-500">Monthly</dt><dd className="font-medium">{formatCurrency(Number(v.monthly_rent))}</dd></div>
               </dl>
             </section>
+
+            {(user?.role === "admin" || user?.role === "accountant") && id && (
+              <VehicleAssignmentHistoryPanel mode="vehicle" entityId={id} title="Driver history" />
+            )}
 
             <section className="bg-white rounded-xl shadow-sm p-6">
               <h2 className="text-sm font-semibold text-slate-800 mb-3">Expiry dates</h2>
@@ -286,191 +306,6 @@ export function VehicleDetailPage() {
                 <p className="text-sm text-slate-700 whitespace-pre-wrap">{v.notes}</p>
               </section>
             )}
-          </div>
-        )}
-
-        {tab === "rentals" && (
-          <div className="space-y-6">
-            {canEdit && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-slate-800">Rentals</h2>
-                  <button
-                    type="button"
-                    onClick={() => setAddRentalOpen(true)}
-                    disabled={v.status === "rented"}
-                    className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
-                  >
-                    Add rental
-                  </button>
-                </div>
-                {v.status === "rented" && (
-                  <p className="text-xs text-slate-500 mt-1">Complete the active rental before starting a new one.</p>
-                )}
-              </div>
-            )}
-
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Driver</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Period</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Type</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Total Rent</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Paid</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Deposit</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Deposit status</th>
-                    <th className="px-3 py-2 text-left font-medium text-slate-700">Status</th>
-                    {canEdit && <th className="px-3 py-2 text-left font-medium text-slate-700">Actions</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rentals.map((r: VehicleRental) => (
-                    <tr key={r.id} className="border-t border-slate-100">
-                      <td className="px-3 py-2">
-                        <div className="flex flex-col gap-0.5">
-                          <Link to={`/drivers/${r.driver_id}`} className="text-sky-600 hover:underline">
-                            {r.driver_first_name} {r.driver_last_name}
-                          </Link>
-                          <Link
-                            to={`/earnings/payouts?driverId=${encodeURIComponent(r.driver_id)}`}
-                            className="text-xs text-slate-500 hover:text-sky-600"
-                          >
-                            Earnings payouts
-                          </Link>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatDate(r.rental_start_date)} – {formatDate(r.rental_end_date)}
-                      </td>
-                      <td className="px-3 py-2 capitalize">{r.rental_type}</td>
-                      <td className="px-3 py-2">
-                        {r.total_rent_amount != null ? (
-                          <div className="inline-flex items-center gap-1.5">
-                            <span>{formatCurrency(Number(r.total_rent_amount))}</span>
-                            <Tooltip
-                              content={`Contract total: ${formatCurrency(Number(r.total_rent_amount))} (${formatDate(r.rental_start_date)}–${formatDate(r.rental_end_date)}). Earnings use this full amount when trips fall in the rental window (not divided by days).`}
-                              align="right"
-                            />
-                          </div>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {(() => {
-                          const paid = Number(r.rent_paid_amount ?? 0) || 0;
-                          const total = Number(r.total_rent_amount ?? 0) || 0;
-                          return (
-                            <div className="inline-flex items-center gap-1.5">
-                              <span>{formatCurrency(paid)}</span>
-                              {paid > 0 && total > 0 && paid < total && (
-                                <span className="text-xs text-amber-600">/ {formatCurrency(total)}</span>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-3 py-2">
-                        {r.deposit_amount ? formatCurrency(Number(r.deposit_amount)) : "—"}
-                        {r.deposit_status === "partial" && r.deposit_deduction_amount && (
-                          <div className="text-xs text-slate-500">
-                            Deducted: {formatCurrency(Number(r.deposit_deduction_amount))}{" "}
-                            {r.deposit_deduction_reason ? `(${r.deposit_deduction_reason})` : ""}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {r.deposit_amount && Number(r.deposit_amount) > 0 ? (
-                          <span
-                            className={`inline-flex rounded px-2 py-0.5 text-xs font-medium capitalize ${
-                              r.deposit_status ? DEPOSIT_STATUS_COLORS[r.deposit_status] ?? "" : "bg-slate-100 text-slate-700"
-                            }`}
-                          >
-                            {r.deposit_status ?? "—"}
-                          </span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${PAYMENT_STATUS_COLORS[r.payment_status] ?? ""}`}>
-                          {r.payment_status}
-                        </span>
-                        {r.status !== "completed" && (
-                          <div className="mt-1">
-                            <span className={`inline-flex rounded px-2 py-0.5 text-[10px] font-medium capitalize ${RENTAL_STATUS_COLORS[r.status] ?? ""}`}>
-                              rental: {r.status}
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                      {canEdit && (
-                        <td className="px-3 py-2">
-                          {r.deposit_amount && Number(r.deposit_amount) > 0 && (
-                            <div className="flex flex-wrap gap-2 mb-1">
-                              {r.deposit_status === "pending" && (
-                                <button
-                                  type="button"
-                                  onClick={() => setDepositAction({ type: "pay", rental: r })}
-                                  className="text-xs text-sky-600 hover:underline"
-                                >
-                                  Mark deposit paid
-                                </button>
-                              )}
-                              {r.deposit_status === "paid" && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => setDepositAction({ type: "refund", rental: r })}
-                                    className="text-xs text-sky-600 hover:underline"
-                                  >
-                                    Refund deposit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setDepositAction({ type: "deduct", rental: r })}
-                                    className="text-xs text-amber-600 hover:underline"
-                                  >
-                                    Deduct from deposit
-                                  </button>
-                                </>
-                              )}
-                              {r.deposit_status === "partial" && (
-                                <button
-                                  type="button"
-                                  onClick={() => setDepositAction({ type: "refund", rental: r })}
-                                  className="text-xs text-sky-600 hover:underline"
-                                >
-                                  Refund remaining
-                                </button>
-                              )}
-                            </div>
-                          )}
-                          {r.status === "active" && (
-                            <button
-                              type="button"
-                              onClick={() => setCompleteRentalId(r.id)}
-                              className="text-sky-600 hover:underline text-sm"
-                            >
-                              Complete
-                            </button>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                  {rentals.length === 0 && (
-                    <tr>
-                      <td colSpan={canEdit ? 9 : 8} className="px-3 py-4 text-center text-slate-500">
-                        No rentals yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
           </div>
         )}
 
@@ -545,34 +380,48 @@ export function VehicleDetailPage() {
         )}
       </main>
 
-      {/* Add rental modal */}
-      {addRentalOpen && (
-        <VehicleRentalDialog
-          dailyRent={Number(v.daily_rent)}
-          weeklyRent={Number(v.weekly_rent)}
-          monthlyRent={Number(v.monthly_rent)}
-          onClose={() => setAddRentalOpen(false)}
-          onSubmit={(payload) => createRentalMutation.mutate(payload)}
-          isSubmitting={createRentalMutation.isPending}
-        />
+      {assignDriverOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-slate-900">Assign driver</h3>
+            <p className="text-sm text-slate-600 mt-1">Select a driver for this vehicle.</p>
+            <select
+              className="mt-4 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={selectedDriverId}
+              onChange={(e) => setSelectedDriverId(e.target.value)}
+            >
+              <option value="">Choose driver…</option>
+              {driversForAssign.map((d: DriverListItem) => (
+                <option key={d.id} value={d.id}>
+                  {d.first_name} {d.last_name}
+                  {d.current_vehicle_id && d.current_vehicle_id !== id ? " (reassign)" : ""}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                disabled={!selectedDriverId || assignDriverMutation.isPending}
+                onClick={() => assignDriverMutation.mutate(selectedDriverId)}
+                className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {assignDriverMutation.isPending ? "Assigning…" : "Assign"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAssignDriverOpen(false);
+                  setSelectedDriverId("");
+                }}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
-      {completeRentalId && (
-        <RentalCompletionModal
-          open
-          onClose={() => setCompleteRentalId(null)}
-          title="Complete rental?"
-          description="The vehicle will be marked as available and the rental will be closed."
-          minDate={toDateInputValue(rentals.find((r) => r.id === completeRentalId)?.rental_start_date)}
-          defaultDate={toDateInputValue(rentals.find((r) => r.id === completeRentalId)?.rental_end_date)}
-          isSubmitting={completeRentalMutation.isPending}
-          onConfirm={(completionDate) =>
-            completeRentalMutation.mutate({ rentalId: completeRentalId, completionDate })
-          }
-        />
-      )}
-
-      {/* Add maintenance modal */}
       {addMaintenanceOpen && (
         <AddMaintenanceModal
           onClose={() => setAddMaintenanceOpen(false)}
@@ -580,175 +429,6 @@ export function VehicleDetailPage() {
           isSubmitting={createMaintenanceMutation.isPending}
         />
       )}
-
-      {/* Deposit actions modal */}
-      {depositAction && (
-        <DepositModal
-          action={depositAction.type}
-          rental={depositAction.rental}
-          onClose={() => setDepositAction(null)}
-          vehicleId={id}
-        />
-      )}
-    </div>
-  );
-}
-
-function DepositModal({
-  action,
-  rental,
-  vehicleId,
-  onClose,
-}: {
-  action: "pay" | "refund" | "deduct";
-  rental: VehicleRental;
-  vehicleId: string | undefined;
-  onClose: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const [paymentMethod, setPaymentMethod] = useState("");
-  const [paymentReference, setPaymentReference] = useState("");
-  const [deductionAmount, setDeductionAmount] = useState<number | "">("");
-  const [deductionReason, setDeductionReason] = useState("");
-
-  const mutation = useMutation({
-    mutationFn: async () => {
-      if (!vehicleId) return;
-      if (action === "pay") {
-        return updateVehicleRental(vehicleId, rental.id, {
-          depositStatus: "paid",
-          paymentMethod: paymentMethod || undefined,
-          paymentReference: paymentReference || undefined,
-        });
-      }
-      if (action === "refund") {
-        return updateVehicleRental(vehicleId, rental.id, {
-          depositStatus: "refunded",
-          paymentMethod: paymentMethod || undefined,
-          paymentReference: paymentReference || undefined,
-        });
-      }
-      // deduct
-      const amount =
-        deductionAmount === "" ? 0 : Number(deductionAmount);
-      return updateVehicleRental(vehicleId, rental.id, {
-        depositStatus: "partial",
-        depositDeductionAmount: amount,
-        depositDeductionReason: deductionReason || undefined,
-        paymentMethod: paymentMethod || undefined,
-      });
-    },
-    onSuccess: (response) => {
-      const updated = response?.data;
-      queryClient.invalidateQueries({ queryKey: ["vehicleRentals", vehicleId] });
-      queryClient.invalidateQueries({ queryKey: ["vehicle", vehicleId] });
-      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
-      if (updated?.driver_id) {
-        queryClient.invalidateQueries({ queryKey: ["driver", updated.driver_id] });
-        queryClient.invalidateQueries({ queryKey: ["driverActiveRental", updated.driver_id] });
-      }
-      onClose();
-    },
-  });
-
-  const title =
-    action === "pay"
-      ? "Mark deposit as paid"
-      : action === "refund"
-        ? "Refund deposit"
-        : "Deduct from deposit";
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    mutation.mutate();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
-        <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-        <p className="text-sm text-slate-600 mt-1">
-          Deposit amount:{" "}
-          {rental.deposit_amount ? formatCurrency(Number(rental.deposit_amount)) : "—"}
-        </p>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-          {action === "deduct" && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Deduction amount (RON)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={rental.deposit_amount ? Number(rental.deposit_amount) : undefined}
-                  step={0.01}
-                  required
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={deductionAmount === "" ? "" : deductionAmount}
-                  onChange={(e) =>
-                    setDeductionAmount(e.target.value ? parseFloat(e.target.value) : "")
-                  }
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Deduction reason
-                </label>
-                <textarea
-                  rows={2}
-                  required
-                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={deductionReason}
-                  onChange={(e) => setDeductionReason(e.target.value)}
-                />
-              </div>
-            </>
-          )}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Payment method
-            </label>
-            <input
-              type="text"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-              placeholder="e.g. cash, bank transfer"
-            />
-          </div>
-          {action !== "deduct" && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Reference / notes
-              </label>
-              <input
-                type="text"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                value={paymentReference}
-                onChange={(e) => setPaymentReference(e.target.value)}
-              />
-            </div>
-          )}
-          <div className="flex gap-2 pt-2">
-            <button
-              type="submit"
-              disabled={mutation.isPending}
-              className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
-            >
-              {mutation.isPending ? "Saving..." : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={mutation.isPending}
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
   );
 }

@@ -13,7 +13,12 @@
     "migrate:055": "node scripts/apply-migration-055.mjs",
     "migrate:058": "node scripts/apply-migration-058.mjs",
     "migrate:057-059": "node scripts/apply-migrations-057-059.mjs",
-    "migrate:060-062": "node scripts/apply-migrations-060-062.mjs"
+    "migrate:060-062": "node scripts/apply-migrations-060-062.mjs",
+    "migrate:063": "node scripts/apply-migration-063.mjs",
+    "migrate:064": "node scripts/apply-migration-064.mjs",
+    "migrate:065": "node scripts/apply-migration-065.mjs",
+    "migrate:066": "node scripts/apply-migration-066.mjs",
+    "audit:rentals": "node scripts/audit-rental-tables.mjs"
   },
   "keywords": [],
   "author": "",
